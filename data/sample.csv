@@ -1,11 +1,16 @@
-title,year,release_date,first_air_date,next_episode_date,status,show_type,platform,genre
-三体 2024 电视剧,2024,,2024-01-15,,airing,tv,腾讯视频,科幻/悬疑
-庆余年第二季,2024,,2024-05-16,2024-06-15,airing,tv,爱奇艺,古装/剧情
-Breaking Bad 2008,2008,,2008-01-20,,ended,tv,AMC,Crime/Drama
-The Last of Us S01,2023,,2023-01-15,,ended,tv,HBO Max,Sci-Fi/Drama
-你的名字,2016,2016-08-26,,,ended,movie,,动画/爱情
-鱿鱼游戏 Squid Game,2021,,2021-09-17,,ended,tv,Netflix,惊悚/悬疑
-流浪地球2,2023,2023-01-22,,,ended,movie,院线,科幻/冒险
-进击的巨人 最终季,2023,,2023-03-04,,ended,anime,Crunchyroll,动作/奇幻
-繁花,2024,,2023-12-27,,ended,tv,腾讯视频,剧情/爱情
-Shogun 2024,2024,,2024-02-27,,airing,tv,Hulu,历史/剧情
+title,year,release_date,first_air_date,air_date,next_episode_date,status,show_type,platform,genre
+三体 2024 电视剧,2024,,2024-01-15,2024-01-15,,airing,tv,腾讯视频,科幻/悬疑
+庆余年第二季,2024,,2024-05-16,,2026-06-20,airing,tv,爱奇艺,古装/剧情
+Breaking Bad 2008,2008,,2008-01-20,,,ended,tv,AMC,Crime/Drama
+The Last of Us S01,2023,,2023-01-15,,,ended,tv,HBO Max,Sci-Fi/Drama
+你的名字,2016,2016-08-26,,,,ended,movie,,动画/爱情
+鱿鱼游戏 Squid Game,2021,,2021-09-17,,,ended,tv,Netflix,惊悚/悬疑
+流浪地球2,2023,2023-01-22,,,,ended,movie,院线,科幻/冒险
+进击的巨人 最终季,2023,,2023-03-04,,,ended,anime,Crunchyroll,动作/奇幻
+繁花,2024,,2023-12-27,,,ended,tv,腾讯视频,剧情/爱情
+Shogun 2024,2024,,2024-02-27,,2026-06-15,airing,tv,Hulu,历史/剧情
+沙丘2 Dune Part Two,2024,2024-03-01,,,,ended,movie,院线,科幻/冒险
+Fallout S01,2024,,2024-04-11,,2026-06-18,airing,tv,Prime Video,Sci-Fi/Action
+House of the Dragon S02,2024,,2024-06-16,,2026-06-23,airing,tv,HBO Max,奇幻/剧情
+蓝眼武士 Blue Eye Samurai,2023,,2023-11-03,,,airing,anime,Netflix,动作/动画
+与凤行,2024,,2024-03-18,,,ended,tv,腾讯视频,古装/爱情

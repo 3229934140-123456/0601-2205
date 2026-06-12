@@ -19,6 +19,8 @@ from .exporter import (
     export_translation_list,
     export_ranking,
     export_weekly_summary,
+    export_weekly_report,
+    export_calendar,
 )
 
 app = typer.Typer(
@@ -172,6 +174,32 @@ def export_cmd(
     database = ShowDatabase(_db_path(db))
     export_shows(database, output, fmt, group_by, status, show_type)
     console.print(f"[green]✓ 已导出到 {output}[/green]")
+
+
+@app.command("weekly", help="导出周报（支持字幕组/观影社群/个人三种模板）")
+def weekly_cmd(
+    output: Path = typer.Argument(..., help="输出文件路径"),
+    db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
+    template: str = typer.Option("community", "--template", help="周报模板：subteam（字幕组）/ community（观影社群）/ personal（个人追剧）"),
+    fmt: str = typer.Option("markdown", "--format", help="输出格式：markdown / csv / json"),
+):
+    database = ShowDatabase(_db_path(db))
+    if template not in ("subteam", "community", "personal"):
+        console.print(f"[red]未知模板: {template}[/red]")
+        raise typer.Exit(1)
+    export_weekly_report(database, output, template, fmt)
+    console.print(f"[green]✓ 周报已导出到 {output}（模板：{template}）[/green]")
+
+
+@app.command("calendar", help="导出日历文件（iCal 格式，可导入系统日历）")
+def calendar_cmd(
+    output: Path = typer.Argument(..., help="输出 .ics 文件路径"),
+    db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
+):
+    database = ShowDatabase(_db_path(db))
+    export_calendar(database, output)
+    console.print(f"[green]✓ 日历已导出到 {output}[/green]")
+    console.print(f"[yellow]提示：可双击 .ics 文件导入系统日历，包含上映/首播/下一集更新等事件[/yellow]")
 
 
 @app.command("list", help="列出数据库中所有影片")

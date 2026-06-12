@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,7 @@ GroupBy = Literal[
     "genre", "platform", "status", "type",
 ]
 ExportFormat = Literal["markdown", "csv", "json"]
+WeeklyTemplate = Literal["subteam", "community", "personal"]
 
 
 _GROUP_LABELS = {
@@ -34,6 +36,12 @@ _GROUP_LABELS = {
     "platform": "平台",
     "status": "状态",
     "type": "类型",
+}
+
+_TEMPLATE_NAMES = {
+    "subteam": "字幕组周报",
+    "community": "观影社群周报",
+    "personal": "个人追剧周报",
 }
 
 
@@ -62,16 +70,17 @@ def export_shows(
             pass
 
     if group_by:
-        groups = _group_shows(shows, group_by)
+        groups, group_ranges = _group_shows(shows, group_by)
     else:
         groups = {"全部": shows}
+        group_ranges = {"全部": ""}
 
     if fmt == "json":
-        return _export_json(groups, output, group_by)
+        return _export_json(groups, output, group_by, group_ranges)
     elif fmt == "csv":
-        return _export_csv(groups, output, group_by)
+        return _export_csv(groups, output, group_by, group_ranges)
     else:
-        return _export_markdown(groups, output, group_by)
+        return _export_markdown(groups, output, group_by, group_ranges)
 
 
 def export_watchlist(
@@ -96,13 +105,14 @@ def export_watchlist(
 
     shows = generate_watchlist(db, status=st, show_type=tp)
     groups = {"追剧清单": shows}
+    group_ranges = {"追剧清单": ""}
 
     if fmt == "json":
-        return _export_json(groups, output, None)
+        return _export_json(groups, output, None, group_ranges)
     elif fmt == "csv":
-        return _export_csv(groups, output, None)
+        return _export_csv(groups, output, None, group_ranges)
     else:
-        return _export_markdown(groups, output, None)
+        return _export_markdown(groups, output, None, group_ranges)
 
 
 def export_reminders(db: ShowDatabase, output: Path, fmt: ExportFormat = "markdown") -> Path:
@@ -199,122 +209,182 @@ def export_weekly_summary(db: ShowDatabase, output: Path) -> Path:
     return output
 
 
-def _group_shows(shows: list[Show], group_by: GroupBy) -> dict[str, list[Show]]:
+def _group_shows(shows: list[Show], group_by: GroupBy) -> tuple[dict[str, list[Show]], dict[str, str]]:
+    group_ranges = {}
     if group_by == "recent":
-        return _group_by_recent(shows)
+        groups, group_ranges = _group_by_recent(shows)
+        return groups, group_ranges
     if group_by == "year-month":
-        return _group_by_year_month(shows)
+        groups, group_ranges = _group_by_year_month(shows)
+        return groups, group_ranges
     if group_by == "release_date":
-        return _group_by_release_date(shows)
+        groups, group_ranges = _group_by_release_date(shows)
+        return groups, group_ranges
     if group_by == "next_update":
-        return _group_by_next_update(shows)
+        groups, group_ranges = _group_by_next_update(shows)
+        return groups, group_ranges
 
     groups: dict[str, list[Show]] = defaultdict(list)
     for show in shows:
         key = _get_group_key(show, group_by)
         groups[key].append(show)
-    return dict(sorted(groups.items(), key=lambda x: x[0], reverse=(group_by == "year")))
+    return dict(sorted(groups.items(), key=lambda x: x[0], reverse=(group_by == "year"))), group_ranges
 
 
 def _group_by_recent(shows: list[Show]) -> dict[str, list[Show]]:
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
     month_start = today.replace(day=1)
+    next_month = month_start.replace(month=month_start.month + 1 if month_start.month < 12 else 1, year=month_start.year + 1 if month_start.month == 12 else month_start.year)
+    month_end = next_month - timedelta(days=1)
     quarter_start = _quarter_start(today)
 
     groups: dict[str, list[Show]] = defaultdict(list)
+    group_ranges: dict[str, str] = {}
     for show in shows:
-        d = show.primary_date()
+        d = show.update_date()
         if not d:
             groups["未知日期"].append(show)
             continue
         if d >= today:
             if d <= today + timedelta(days=7):
-                groups["🔜 一周内更新"].append(show)
+                key = f"🔜 未来7天更新 ({today.isoformat()} ~ {(today + timedelta(days=7)).isoformat()})"
+                groups[key].append(show)
+                group_ranges[key] = f"{today.isoformat()}~{(today + timedelta(days=7)).isoformat()}"
             elif d <= today + timedelta(days=30):
-                groups["📅 一月内上线"].append(show)
+                key = f"📅 未来30天上线 ({today.isoformat()} ~ {(today + timedelta(days=30)).isoformat()})"
+                groups[key].append(show)
+                group_ranges[key] = f"{today.isoformat()}~{(today + timedelta(days=30)).isoformat()}"
             else:
-                groups["⏳ 即将上线"].append(show)
+                key = f"⏳ 即将上线 ({(today + timedelta(days=31)).isoformat()} 之后)"
+                groups[key].append(show)
+                group_ranges[key] = f">{(today + timedelta(days=31)).isoformat()}"
         else:
             if d >= week_start:
-                groups["📆 本周上线"].append(show)
+                key = f"📆 本周更新 ({week_start.isoformat()} ~ {week_end.isoformat()})"
+                groups[key].append(show)
+                group_ranges[key] = f"{week_start.isoformat()}~{week_end.isoformat()}"
             elif d >= month_start:
-                groups["📅 本月上线"].append(show)
+                key = f"📅 本月更新 ({month_start.isoformat()} ~ {month_end.isoformat()})"
+                groups[key].append(show)
+                group_ranges[key] = f"{month_start.isoformat()}~{month_end.isoformat()}"
             elif d >= quarter_start:
-                groups["🗓️ 本季上线"].append(show)
+                key = f"🗓️ 本季更新 ({quarter_start.isoformat()} ~ {today.isoformat()})"
+                groups[key].append(show)
+                group_ranges[key] = f"{quarter_start.isoformat()}~{today.isoformat()}"
             elif d.year == today.year:
-                groups["📆 今年上线"].append(show)
+                key = f"📆 今年更新 ({today.year}-01-01 ~ {today.isoformat()})"
+                groups[key].append(show)
+                group_ranges[key] = f"{today.year}-01-01~{today.isoformat()}"
             else:
-                groups["📚 往期"].append(show)
+                key = f"📚 往期 (截至 {quarter_start.isoformat()})"
+                groups[key].append(show)
+                group_ranges[key] = f"<{quarter_start.isoformat()}"
 
-    order = ["🔜 一周内更新", "📅 一月内上线", "⏳ 即将上线",
-             "📆 本周上线", "📅 本月上线", "🗓️ 本季上线",
-             "📆 今年上线", "📚 往期", "未知日期"]
+    order = [k for k in groups if k.startswith("🔜")] + \
+            [k for k in groups if k.startswith("📅") and "30" in k] + \
+            [k for k in groups if k.startswith("⏳")] + \
+            [k for k in groups if k.startswith("📆") and "本周" in k] + \
+            [k for k in groups if k.startswith("📅") and "本月" in k] + \
+            [k for k in groups if k.startswith("🗓️")] + \
+            [k for k in groups if k.startswith("📆") and "今年" in k] + \
+            [k for k in groups if k.startswith("📚")] + \
+            ["未知日期"]
     ordered = {}
     for k in order:
         if k in groups:
             ordered[k] = groups[k]
-    return ordered
+    return ordered, group_ranges
 
 
-def _group_by_year_month(shows: list[Show]) -> dict[str, list[Show]]:
+def _group_by_year_month(shows: list[Show]) -> tuple[dict[str, list[Show]], dict[str, str]]:
     groups: dict[str, list[Show]] = defaultdict(list)
+    group_ranges: dict[str, str] = {}
     for show in shows:
         d = show.primary_date()
         if d:
-            key = d.strftime("%Y-%m")
+            ym = d.strftime("%Y-%m")
+            month_end = d.replace(day=28) + timedelta(days=4)
+            month_end = month_end - timedelta(days=month_end.day)
+            key = f"{ym} ({d.strftime('%Y-%m-01')} ~ {month_end.isoformat()})"
+            groups[key].append(show)
+            group_ranges[key] = f"{d.strftime('%Y-%m-01')}~{month_end.isoformat()}"
         else:
             key = "未知年月"
-        groups[key].append(show)
-    return dict(sorted(groups.items(), reverse=True))
+            groups[key].append(show)
+            group_ranges[key] = ""
+    return dict(sorted(groups.items(), reverse=True)), group_ranges
 
 
-def _group_by_release_date(shows: list[Show]) -> dict[str, list[Show]]:
+def _group_by_release_date(shows: list[Show]) -> tuple[dict[str, list[Show]], dict[str, str]]:
     groups: dict[str, list[Show]] = defaultdict(list)
+    group_ranges: dict[str, str] = {}
     for show in shows:
         d = show.primary_date()
         if d:
-            key = d.isoformat()
+            key = f"上线日期：{d.isoformat()}"
+            groups[key].append(show)
+            group_ranges[key] = d.isoformat()
         else:
             key = "未知日期"
-        groups[key].append(show)
-    return dict(sorted(groups.items(), reverse=True))
+            groups[key].append(show)
+            group_ranges[key] = ""
+    return dict(sorted(groups.items(), reverse=True)), group_ranges
 
 
-def _group_by_next_update(shows: list[Show]) -> dict[str, list[Show]]:
+def _group_by_next_update(shows: list[Show]) -> tuple[dict[str, list[Show]], dict[str, str]]:
     today = date.today()
     groups: dict[str, list[Show]] = defaultdict(list)
+    group_ranges: dict[str, str] = {}
     for show in shows:
-        d = show.next_episode_date or show.primary_date()
+        d = show.update_date()
         if d:
             if d >= today:
                 diff = (d - today).days
                 if diff <= 7:
-                    key = f"未来7天内"
+                    key = f"未来7天内 ({today.isoformat()} ~ {(today + timedelta(days=7)).isoformat()})"
+                    groups[key].append(show)
+                    group_ranges[key] = f"{today.isoformat()}~{(today + timedelta(days=7)).isoformat()}"
                 elif diff <= 30:
-                    key = f"未来30天内"
+                    key = f"未来30天内 ({today.isoformat()} ~ {(today + timedelta(days=30)).isoformat()})"
+                    groups[key].append(show)
+                    group_ranges[key] = f"{today.isoformat()}~{(today + timedelta(days=30)).isoformat()}"
                 else:
-                    key = f"更远的将来"
+                    key = f"更远的将来 ({(today + timedelta(days=31)).isoformat()} 之后)"
+                    groups[key].append(show)
+                    group_ranges[key] = f">{(today + timedelta(days=31)).isoformat()}"
             else:
                 diff = (today - d).days
                 if diff <= 7:
-                    key = "过去7天内"
+                    key = f"过去7天内 ({(today - timedelta(days=7)).isoformat()} ~ {today.isoformat()})"
+                    groups[key].append(show)
+                    group_ranges[key] = f"{(today - timedelta(days=7)).isoformat()}~{today.isoformat()}"
                 elif diff <= 30:
-                    key = "过去30天内"
+                    key = f"过去30天内 ({(today - timedelta(days=30)).isoformat()} ~ {today.isoformat()})"
+                    groups[key].append(show)
+                    group_ranges[key] = f"{(today - timedelta(days=30)).isoformat()}~{today.isoformat()}"
                 else:
-                    key = "更早更新"
+                    key = f"更早更新 (截至 {(today - timedelta(days=31)).isoformat()})"
+                    groups[key].append(show)
+                    group_ranges[key] = f"<{(today - timedelta(days=31)).isoformat()}"
         else:
             key = "更新时间未知"
-        groups[key].append(show)
+            groups[key].append(show)
+            group_ranges[key] = ""
 
-    order = ["未来7天内", "未来30天内", "更远的将来",
-             "过去7天内", "过去30天内", "更早更新",
-             "更新时间未知"]
+    order = [k for k in groups if k.startswith("未来7天")] + \
+            [k for k in groups if k.startswith("未来30天")] + \
+            [k for k in groups if k.startswith("更远")] + \
+            [k for k in groups if k.startswith("过去7天")] + \
+            [k for k in groups if k.startswith("过去30天")] + \
+            [k for k in groups if k.startswith("更早")] + \
+            ["更新时间未知"]
     ordered = {}
     for k in order:
         if k in groups:
             ordered[k] = groups[k]
-    return ordered
+    return ordered, group_ranges
 
 
 def _quarter_start(d: date) -> date:
@@ -352,7 +422,7 @@ def _get_group_key(show: Show, group_by: GroupBy) -> str:
     return "其他"
 
 
-def _export_json(groups: dict[str, list[Show]], output: Path, group_by: GroupBy | None) -> Path:
+def _export_json(groups: dict[str, list[Show]], output: Path, group_by: GroupBy | None, group_ranges: dict[str, str]) -> Path:
     group_label = _GROUP_LABELS.get(group_by or "分组")
     data = {
         "_meta": {
@@ -363,14 +433,18 @@ def _export_json(groups: dict[str, list[Show]], output: Path, group_by: GroupBy 
         }
     }
     for group_name, shows in groups.items():
-        data[group_name] = [s.to_dict() for s in shows]
+        data[group_name] = {
+            "range": group_ranges.get(group_name, ""),
+            "count": len(shows),
+            "items": [s.to_dict() for s in shows],
+        }
     output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return output
 
 
-def _export_csv(groups: dict[str, list[Show]], output: Path, group_by: GroupBy | None) -> Path:
+def _export_csv(groups: dict[str, list[Show]], output: Path, group_by: GroupBy | None, group_ranges: dict[str, str]) -> Path:
     headers = [
-        "group_name", "group_category",
+        "group_name", "group_category", "group_range",
         "title_cn", "title_en", "year",
         "release_date", "first_air_date", "last_air_date", "next_episode_date",
         "show_type", "status", "season", "episode",
@@ -387,9 +461,10 @@ def _export_csv(groups: dict[str, list[Show]], output: Path, group_by: GroupBy |
         for group_name, shows in groups.items():
             for show in shows:
                 d = show.to_dict()
-                row = {h: d.get(h, "") for h in headers if h not in ("group_name", "group_category")}
+                row = {h: d.get(h, "") for h in headers if h not in ("group_name", "group_category", "group_range")}
                 row["group_name"] = group_name
                 row["group_category"] = group_label
+                row["group_range"] = group_ranges.get(group_name, "")
                 if isinstance(row.get("missing_fields"), list):
                     row["missing_fields"] = "; ".join(row["missing_fields"])
                 writer.writerow(row)
@@ -400,6 +475,7 @@ def _export_markdown(
     groups: dict[str, list[Show]],
     output: Path,
     group_by: GroupBy | None,
+    group_ranges: dict[str, str],
 ) -> Path:
     lines = []
     today = date.today().isoformat()
@@ -415,7 +491,11 @@ def _export_markdown(
         if group_by:
             subtitle = _format_group_header(group_name, group_by)
             lines.append(f"## {subtitle}")
-            lines.append(f"> {len(shows)} 条\n")
+            range_str = group_ranges.get(group_name, "")
+            if range_str:
+                lines.append(f"> {len(shows)} 条 | 范围：{range_str}\n")
+            else:
+                lines.append(f"> {len(shows)} 条\n")
         else:
             lines.append(f"## {group_name}\n")
 
@@ -528,3 +608,285 @@ def _status_display(st: ShowStatus) -> str:
         ShowStatus.CANCELLED: "已取消",
         ShowStatus.UNKNOWN: "未知",
     }.get(st, "未知")
+
+
+def generate_weekly_report(
+    db: ShowDatabase,
+    template: WeeklyTemplate = "community",
+) -> dict:
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    month_ago = today - timedelta(days=30)
+    next_week = today + timedelta(days=7)
+
+    shows = db.shows
+
+    new_released = []
+    for s in shows:
+        pd = s.primary_date()
+        if pd and pd >= month_ago and pd <= today:
+            new_released.append(s)
+    new_released.sort(key=lambda s: s.primary_date() or date.min, reverse=True)
+
+    upcoming_updates = []
+    for s in shows:
+        nd = s.update_date()
+        if nd and nd >= today and nd <= next_week:
+            upcoming_updates.append(s)
+    upcoming_updates.sort(key=lambda s: s.update_date() or date.max)
+
+    ended_catchup = []
+    for s in shows:
+        if s.status == ShowStatus.ENDED:
+            pd = s.primary_date()
+            if pd and pd >= month_ago:
+                ended_catchup.append(s)
+    ended_catchup.sort(key=lambda s: s.rating or 0, reverse=True)
+
+    missing_info = []
+    for s in shows:
+        mf = s.missing_fields()
+        if mf:
+            missing_info.append(s)
+
+    if template == "subteam":
+        missing_info.sort(key=lambda s: len(s.missing_fields()), reverse=True)
+    elif template == "personal":
+        new_released = [s for s in new_released if s.show_type in (ShowType.TV, ShowType.ANIME, ShowType.MOVIE)]
+        upcoming_updates = [s for s in upcoming_updates if s.show_type in (ShowType.TV, ShowType.ANIME)]
+
+    return {
+        "template": template,
+        "template_name": _TEMPLATE_NAMES.get(template, "周报"),
+        "date_range": f"{week_start.isoformat()} ~ {week_end.isoformat()}",
+        "generated_at": today.isoformat(),
+        "total_count": len(shows),
+        "sections": {
+            "new_released": {
+                "title": "🆕 新上线",
+                "subtitle": f"近一个月上线（{month_ago.isoformat()} ~ {today.isoformat()}）",
+                "items": [_show_brief_for_weekly(s) for s in new_released],
+                "count": len(new_released),
+            },
+            "upcoming_updates": {
+                "title": "🔜 即将更新",
+                "subtitle": f"未来7天更新（{today.isoformat()} ~ {next_week.isoformat()}）",
+                "items": [_show_brief_for_weekly(s) for s in upcoming_updates],
+                "count": len(upcoming_updates),
+            },
+            "ended_catchup": {
+                "title": "✅ 完结可补",
+                "subtitle": f"近一个月完结可补番（{month_ago.isoformat()} ~ {today.isoformat()}）",
+                "items": [_show_brief_for_weekly(s) for s in ended_catchup],
+                "count": len(ended_catchup),
+            },
+            "missing_info": {
+                "title": "⚠️ 资料缺失",
+                "subtitle": "以下条目信息待补全",
+                "items": [_show_brief_for_weekly(s, include_missing=True) for s in missing_info],
+                "count": len(missing_info),
+            },
+        },
+    }
+
+
+def _show_brief_for_weekly(show: Show, include_missing: bool = False) -> dict:
+    brief = {
+        "title_cn": show.title_cn,
+        "title_en": show.title_en,
+        "year": show.year,
+        "show_type": _type_display(show.show_type),
+        "status": _status_display(show.status),
+        "primary_date": show.primary_date().isoformat() if show.primary_date() else "",
+        "next_episode_date": show.next_episode_date.isoformat() if show.next_episode_date else "",
+        "season": show.season,
+        "episode": show.episode,
+        "platform": show.platform or "未知平台",
+        "genre": show.genre,
+        "rating": show.rating,
+    }
+    if include_missing:
+        brief["missing_fields"] = show.missing_fields()
+    return brief
+
+
+def export_weekly_report(
+    db: ShowDatabase,
+    output: Path,
+    template: WeeklyTemplate = "community",
+    fmt: ExportFormat = "markdown",
+) -> Path:
+    report = generate_weekly_report(db, template)
+
+    if fmt == "json":
+        return _export_weekly_json(report, output)
+    elif fmt == "csv":
+        return _export_weekly_csv(report, output)
+    else:
+        return _export_weekly_markdown(report, output)
+
+
+def _export_weekly_markdown(report: dict, output: Path) -> Path:
+    lines = []
+    lines.append(f"# 📋 {report['template_name']}")
+    lines.append(f"> 时间范围：{report['date_range']} | 生成时间：{report['generated_at']} | 共追踪 {report['total_count']} 部\n")
+
+    section_order = ["new_released", "upcoming_updates", "ended_catchup", "missing_info"]
+
+    for section_key in section_order:
+        section = report["sections"][section_key]
+        if not section["items"]:
+            continue
+
+        lines.append(f"## {section['title']}")
+        lines.append(f"> {section['subtitle']} | 共 {section['count']} 部\n")
+
+        lines.append("| 片名 | 英文名 | 年份 | 日期 | 类型 | 状态 | 季/集 | 平台 | 评分 | 备注 |")
+        lines.append("|------|--------|------|------|------|------|-------|------|------|------|")
+
+        for item in section["items"]:
+            name = item["title_cn"] or "-"
+            en = item["title_en"] or "-"
+            year = str(item["year"]) if item["year"] else "-"
+            show_date = item["next_episode_date"] or item["primary_date"] or "-"
+            stype = item["show_type"]
+            status = item["status"]
+            season_ep = ""
+            if item["season"]:
+                season_ep += f"S{item['season']:02d}"
+            if item["episode"]:
+                season_ep += f"E{item['episode']:02d}"
+            season_ep = season_ep or "-"
+            platform = item["platform"]
+            rating = str(item["rating"]) if item["rating"] else "-"
+
+            note_parts = []
+            if item.get("missing_fields"):
+                note_parts.append(f"⚠️ 缺:{','.join(item['missing_fields'][:3])}")
+            if item["next_episode_date"] and section_key == "upcoming_updates":
+                note_parts.append(f"下集:{item['next_episode_date']}")
+            note = "; ".join(note_parts) or "-"
+
+            if item.get("missing_fields"):
+                name = f"{name} ⚠️"
+
+            lines.append(f"| {name} | {en} | {year} | {show_date} | {stype} | {status} | {season_ep} | {platform} | {rating} | {note} |")
+        lines.append("")
+
+    output.write_text("\n".join(lines), encoding="utf-8")
+    return output
+
+
+def _export_weekly_csv(report: dict, output: Path) -> Path:
+    headers = [
+        "section", "section_title", "section_subtitle",
+        "title_cn", "title_en", "year", "show_type", "status",
+        "primary_date", "next_episode_date",
+        "season", "episode", "platform", "genre", "rating",
+        "missing_fields",
+    ]
+
+    section_order = ["new_released", "upcoming_updates", "ended_catchup", "missing_info"]
+
+    with open(output, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        for section_key in section_order:
+            section = report["sections"][section_key]
+            for item in section["items"]:
+                row = {
+                    "section": section_key,
+                    "section_title": section["title"],
+                    "section_subtitle": section["subtitle"],
+                    "title_cn": item.get("title_cn", ""),
+                    "title_en": item.get("title_en", ""),
+                    "year": item.get("year", ""),
+                    "show_type": item.get("show_type", ""),
+                    "status": item.get("status", ""),
+                    "primary_date": item.get("primary_date", ""),
+                    "next_episode_date": item.get("next_episode_date", ""),
+                    "season": item.get("season", ""),
+                    "episode": item.get("episode", ""),
+                    "platform": item.get("platform", ""),
+                    "genre": item.get("genre", ""),
+                    "rating": item.get("rating", ""),
+                }
+                mf = item.get("missing_fields", [])
+                if mf:
+                    row["missing_fields"] = "; ".join(mf)
+                writer.writerow(row)
+    return output
+
+
+def _export_weekly_json(report: dict, output: Path) -> Path:
+    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return output
+
+
+def export_calendar(db: ShowDatabase, output: Path) -> Path:
+    shows = db.shows
+    ical_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Show Tracker//CN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+
+    for show in shows:
+        name = show.title_cn or show.title_en or "未知影片"
+        platform = show.platform or "未知平台"
+        season_ep = ""
+        if show.season:
+            season_ep += f"S{show.season:02d}"
+        if show.episode:
+            season_ep += f"E{show.episode:02d}"
+
+        for date_type, d in show.all_dates():
+            if not d:
+                continue
+
+            dtstart = d.strftime("%Y%m%d")
+            dtend = (d + timedelta(days=1)).strftime("%Y%m%d")
+            uid = f"{uuid.uuid4().hex}@showtracker"
+            dtstamp = datetime.now().strftime("%Y%m%dT%H%M%SZ")
+
+            summary_parts = [date_type, name]
+            if season_ep:
+                summary_parts.append(season_ep)
+            summary = " | ".join(summary_parts)
+
+            description_parts = []
+            if show.title_cn and show.title_en:
+                description_parts.append(f"中文名: {show.title_cn}")
+                description_parts.append(f"英文名: {show.title_en}")
+            elif show.title_en:
+                description_parts.append(f"原名: {show.title_en}")
+            if show.year:
+                description_parts.append(f"年份: {show.year}")
+            if season_ep:
+                description_parts.append(f"季集: {season_ep}")
+            description_parts.append(f"平台: {platform}")
+            if show.genre:
+                description_parts.append(f"类型: {show.genre}")
+            if show.rating:
+                description_parts.append(f"评分: {show.rating}")
+            description = "\\n".join(description_parts)
+
+            event = [
+                "BEGIN:VEVENT",
+                f"DTSTART;VALUE=DATE:{dtstart}",
+                f"DTEND;VALUE=DATE:{dtend}",
+                f"DTSTAMP:{dtstamp}",
+                f"UID:{uid}",
+                f"SUMMARY:{summary}",
+                f"DESCRIPTION:{description}",
+                f"LOCATION:{platform}",
+                "END:VEVENT",
+            ]
+            ical_lines.extend(event)
+
+    ical_lines.append("END:VCALENDAR")
+    output.write_text("\r\n".join(ical_lines), encoding="utf-8")
+    return output

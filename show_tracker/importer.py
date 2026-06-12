@@ -61,6 +61,7 @@ def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
         "year": "year",
         "release_date": "release_date",
         "first_air_date": "first_air_date",
+        "air_date": "first_air_date",
         "last_air_date": "last_air_date",
         "next_episode_date": "next_episode_date",
         "season": "season",
@@ -87,11 +88,12 @@ def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
                 setattr(show, attr, int(val))
             except (ValueError, TypeError):
                 pass
-        elif attr in ("release_date", "first_air_date", "last_air_date", "next_episode_date"):
+        elif attr in ("release_date", "first_air_date", "last_air_date", "next_episode_date", "air_date"):
+            actual_attr = "first_air_date" if attr == "air_date" else attr
             parsed = _parse_date(val)
             if parsed:
-                setattr(show, attr, parsed)
-                if attr in ("release_date", "first_air_date") and not show.year:
+                setattr(show, actual_attr, parsed)
+                if actual_attr in ("release_date", "first_air_date") and not show.year:
                     show.year = parsed.year
         elif attr == "season":
             try:

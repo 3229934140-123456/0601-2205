@@ -95,8 +95,6 @@ class Show:
         return result
 
     def primary_date(self) -> Optional[date]:
-        if self.next_episode_date:
-            return self.next_episode_date
         if self.first_air_date:
             return self.first_air_date
         if self.release_date:
@@ -104,6 +102,25 @@ class Show:
         if self.last_air_date:
             return self.last_air_date
         return None
+
+    def update_date(self) -> Optional[date]:
+        if self.next_episode_date:
+            return self.next_episode_date
+        if self.last_air_date:
+            return self.last_air_date
+        return self.primary_date()
+
+    def all_dates(self) -> list[tuple[str, date]]:
+        dates = []
+        if self.release_date:
+            dates.append(("上映日期", self.release_date))
+        if self.first_air_date:
+            dates.append(("首播日期", self.first_air_date))
+        if self.last_air_date:
+            dates.append(("完结日期", self.last_air_date))
+        if self.next_episode_date:
+            dates.append(("下一集更新", self.next_episode_date))
+        return dates
 
     def to_dict(self) -> dict:
         d = asdict(self)

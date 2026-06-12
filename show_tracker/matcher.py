@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime
 from typing import Optional
 
@@ -73,7 +74,14 @@ class TMDBClient:
         if not query:
             return None
 
-        is_tv = show.show_type in (ShowType.TV, ShowType.ANIME, ShowType.VARIETY)
+        has_season_marker = show.season is not None
+        has_episode_marker = show.episode is not None
+        raw_has_season = bool(re.search(r"[Ss]\d+|第\s*\d+\s*季|Season\s*\d+", show.raw_title, re.IGNORECASE))
+        raw_has_episode = bool(re.search(r"[Ee]\d+|第\s*\d+\s*集|EP?\s*\d+", show.raw_title, re.IGNORECASE))
+
+        force_tv = has_season_marker or has_episode_marker or raw_has_season or raw_has_episode
+
+        is_tv = force_tv or show.show_type in (ShowType.TV, ShowType.ANIME, ShowType.VARIETY)
         year = show.year
 
         if is_tv:
@@ -88,6 +96,18 @@ class TMDBClient:
                     results = self.search_tv(alt_query, year)
                 else:
                     results = self.search_movie(alt_query, year)
+
+        if not results and not is_tv and show.show_type == ShowType.UNKNOWN:
+            results = self.search_tv(query, year)
+            if not results:
+                alt_query = show.title_cn if query == show.title_en else show.title_en
+                if alt_query:
+                    results = self.search_tv(alt_query, year)
+            if results:
+                is_tv = True
+
+        if not results and not is_tv and show.show_type == ShowType.UNKNOWN:
+            pass
 
         if not results:
             return None
@@ -147,7 +167,14 @@ class TMDBClient:
         if tmdb_id:
             show.tmdb_id = tmdb_id
 
-        is_tv = show.show_type in (ShowType.TV, ShowType.ANIME, ShowType.VARIETY)
+        has_season_marker = show.season is not None
+        has_episode_marker = show.episode is not None
+        raw_has_season = bool(re.search(r"[Ss]\d+|第\s*\d+\s*季|Season\s*\d+", show.raw_title, re.IGNORECASE))
+        raw_has_episode = bool(re.search(r"[Ee]\d+|第\s*\d+\s*集|EP?\s*\d+", show.raw_title, re.IGNORECASE))
+        force_tv = has_season_marker or has_episode_marker or raw_has_season or raw_has_episode
+
+        is_tv = force_tv or show.show_type in (ShowType.TV, ShowType.ANIME, ShowType.VARIETY)
+
         if not is_tv and (detail.get("first_air_date") or detail.get("number_of_seasons")):
             is_tv = True
             if show.show_type == ShowType.UNKNOWN:
