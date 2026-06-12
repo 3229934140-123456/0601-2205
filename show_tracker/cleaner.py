@@ -67,11 +67,12 @@ def _merge_into(target: Show, source: Show) -> None:
 
 
 def _infer_type(show: Show) -> ShowType:
+    import re
     title = f"{show.title_cn} {show.title_en} {show.raw_title}".lower()
     anime_kw = ["动漫", "番", "anime", "animation", "cartoon"]
     variety_kw = ["综艺", "variety", "show", "真人秀"]
     movie_kw = ["电影", "movie", "film", "剧场版", "院线"]
-    tv_kw = ["电视剧", "tv", "series", "drama", "剧"]
+    tv_kw = ["电视剧", "tv", "series", "drama", "剧", "季", "集"]
 
     for kw in anime_kw:
         if kw in title:
@@ -79,15 +80,26 @@ def _infer_type(show: Show) -> ShowType:
     for kw in variety_kw:
         if kw in title:
             return ShowType.VARIETY
-    for kw in movie_kw:
-        if kw in title:
-            return ShowType.MOVIE
+
+    has_season_marker = show.season is not None
+    has_episode_marker = show.episode is not None
+    raw_has_season = bool(re.search(r"[Ss]\d+|第\s*\d+\s*季|Season\s*\d+", show.raw_title, re.IGNORECASE))
+    raw_has_episode = bool(re.search(r"[Ee]\d+|第\s*\d+\s*集|EP?\s*\d+", show.raw_title, re.IGNORECASE))
+    has_next_ep_date = show.next_episode_date is not None
+
+    if has_season_marker or has_episode_marker or raw_has_season or raw_has_episode or has_next_ep_date:
+        return ShowType.TV
+
     for kw in tv_kw:
         if kw in title:
             return ShowType.TV
 
-    if show.season is not None or show.episode is not None:
-        return ShowType.TV
+    for kw in movie_kw:
+        if kw in title:
+            return ShowType.MOVIE
+
+    if show.release_date and not show.first_air_date and not show.next_episode_date:
+        return ShowType.MOVIE
 
     return ShowType.UNKNOWN
 

@@ -21,6 +21,8 @@ from .exporter import (
     export_weekly_summary,
     export_weekly_report,
     export_calendar,
+    export_subscription_reminders,
+    apply_supplement,
 )
 
 app = typer.Typer(
@@ -200,6 +202,52 @@ def calendar_cmd(
     export_calendar(database, output)
     console.print(f"[green]✓ 日历已导出到 {output}[/green]")
     console.print(f"[yellow]提示：可双击 .ics 文件导入系统日历，包含上映/首播/下一集更新等事件[/yellow]")
+
+
+@app.command("remind", help="订阅式提醒导出（今天/未来7天/未来30天三档）")
+def remind_cmd(
+    output: Path = typer.Argument(..., help="输出文件路径"),
+    db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
+    fmt: str = typer.Option("markdown", "--format", help="输出格式：markdown / csv / json"),
+):
+    database = ShowDatabase(_db_path(db))
+    export_subscription_reminders(database, output, fmt)
+    console.print(f"[green]✓ 订阅提醒已导出到 {output}[/green]")
+    # 显示一下概览
+    from .exporter import generate_subscription_reminders
+    data = generate_subscription_reminders(database)
+    for key in ["today", "week", "month"]:
+        sec = data["sections"][key]
+        if sec["total"] > 0:
+            console.print(f"  {sec['label']}: 更新 {sec['updates_count']} / 新上线 {sec['new_releases_count']}")
+
+
+@app.command("supplement", help="从本地补充表补全资料（TMDB没补到的平台/导演/主演等）")
+def supplement_cmd(
+    supplement_file: Path = typer.Argument(..., help="补充表文件路径（CSV/Excel）"),
+    db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
+):
+    database = ShowDatabase(_db_path(db))
+    if not supplement_file.exists():
+        console.print(f"[red]补充表不存在: {supplement_file}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[cyan]正在从补充表 {supplement_file} 补全资料...[/cyan]")
+    stats = apply_supplement(database, supplement_file)
+
+    console.print(f"[green]✓ 补充完成[/green]")
+    console.print(f"  匹配到: {stats['matched']} 条")
+    console.print(f"  字段更新: {stats['fields_updated']} 处")
+    if stats["platform_updated"]:
+        console.print(f"    平台: {stats['platform_updated']} 处")
+    if stats["director_updated"]:
+        console.print(f"    导演: {stats['director_updated']} 处")
+    if stats["cast_updated"]:
+        console.print(f"    主演: {stats['cast_updated']} 处")
+    if stats["genre_updated"]:
+        console.print(f"    类型: {stats['genre_updated']} 处")
+    if stats["not_found"]:
+        console.print(f"[yellow]  未匹配到: {stats['not_found']} 条[/yellow]")
 
 
 @app.command("list", help="列出数据库中所有影片")

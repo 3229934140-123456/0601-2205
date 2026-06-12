@@ -56,44 +56,51 @@ def _import_dataframe(df: pd.DataFrame, db: ShowDatabase, title_col: str, merge:
 
 def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
     field_map = {
-        "title_cn": "title_cn",
-        "title_en": "title_en",
-        "year": "year",
-        "release_date": "release_date",
-        "first_air_date": "first_air_date",
-        "air_date": "first_air_date",
-        "last_air_date": "last_air_date",
-        "next_episode_date": "next_episode_date",
-        "season": "season",
-        "episode": "episode",
-        "director": "director",
-        "cast": "cast",
-        "genre": "genre",
-        "duration": "duration",
-        "platform": "platform",
-        "poster_url": "poster_url",
-        "notes": "notes",
+        "title_cn": ["title_cn"],
+        "title_en": ["title_en"],
+        "year": ["year"],
+        "release_date": ["release_date"],
+        "first_air_date": ["first_air_date", "air_date"],
+        "last_air_date": ["last_air_date"],
+        "next_episode_date": ["next_episode_date"],
+        "season": ["season"],
+        "episode": ["episode"],
+        "director": ["director"],
+        "cast": ["cast"],
+        "genre": ["genre"],
+        "duration": ["duration"],
+        "platform": ["platform"],
+        "poster_url": ["poster_url"],
+        "notes": ["notes"],
     }
     from .models import ShowType, ShowStatus, _STATUS_MAP, _TYPE_MAP, _parse_date
 
-    for attr, col_name in field_map.items():
-        mapped = col_map.get(col_name.lower(), col_name)
-        val = row.get(mapped, "")
-        if isinstance(val, str):
-            val = val.strip()
-        if not val:
+    for attr, col_names in field_map.items():
+        actual_col = None
+        val = ""
+        for cn in col_names:
+            if cn.lower() in col_map:
+                col_name = col_map[cn.lower()]
+                candidate_val = row.get(col_name, "")
+                if isinstance(candidate_val, str):
+                    candidate_val = candidate_val.strip()
+                if candidate_val:
+                    actual_col = col_name
+                    val = candidate_val
+                    break
+        if actual_col is None:
             continue
+
         if attr == "year":
             try:
                 setattr(show, attr, int(val))
             except (ValueError, TypeError):
                 pass
-        elif attr in ("release_date", "first_air_date", "last_air_date", "next_episode_date", "air_date"):
-            actual_attr = "first_air_date" if attr == "air_date" else attr
+        elif attr in ("release_date", "first_air_date", "last_air_date", "next_episode_date"):
             parsed = _parse_date(val)
             if parsed:
-                setattr(show, actual_attr, parsed)
-                if actual_attr in ("release_date", "first_air_date") and not show.year:
+                setattr(show, attr, parsed)
+                if attr in ("release_date", "first_air_date") and not show.year:
                     show.year = parsed.year
         elif attr == "season":
             try:

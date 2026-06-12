@@ -890,3 +890,317 @@ def export_calendar(db: ShowDatabase, output: Path) -> Path:
     ical_lines.append("END:VCALENDAR")
     output.write_text("\r\n".join(ical_lines), encoding="utf-8")
     return output
+
+
+def generate_subscription_reminders(db: ShowDatabase) -> dict:
+    today = date.today()
+    shows = db.shows
+
+    windows = [
+        ("today", "📅 今天", today, today, 0, 0),
+        ("week", "🔜 未来7天", today + timedelta(days=1), today + timedelta(days=7), 1, 7),
+        ("month", "📆 未来30天", today + timedelta(days=8), today + timedelta(days=30), 8, 30),
+    ]
+
+    result = {
+        "generated_at": today.isoformat(),
+        "total_count": len(shows),
+        "sections": {},
+    }
+
+    for key, label, start, end, days_from, days_to in windows:
+        updates = []
+        new_releases = []
+
+        for show in shows:
+            if show.next_episode_date and start <= show.next_episode_date <= end:
+                updates.append(_show_brief_for_reminder(show, "update"))
+            pd = show.primary_date()
+            if pd and start <= pd <= end and show.status != ShowStatus.ENDED:
+                new_releases.append(_show_brief_for_reminder(show, "release"))
+
+        updates.sort(key=lambda x: x["sort_date"])
+        new_releases.sort(key=lambda x: x["sort_date"])
+
+        result["sections"][key] = {
+            "label": label,
+            "date_range": f"{start.isoformat()} ~ {end.isoformat()}",
+            "days_from": days_from,
+            "days_to": days_to,
+            "updates": updates,
+            "updates_count": len(updates),
+            "new_releases": new_releases,
+            "new_releases_count": len(new_releases),
+            "total": len(updates) + len(new_releases),
+        }
+
+    return result
+
+
+def _show_brief_for_reminder(show: Show, reminder_type: str) -> dict:
+    name = show.title_cn or show.title_en or "未知影片"
+    season_ep = ""
+    if show.season:
+        season_ep += f"S{show.season:02d}"
+    if show.episode:
+        season_ep += f"E{show.episode:02d}"
+
+    if reminder_type == "update":
+        reminder_date = show.next_episode_date
+        event_label = "更新"
+    else:
+        reminder_date = show.primary_date()
+        event_label = "上线"
+
+    note_parts = []
+    if reminder_type == "update" and show.episode is not None:
+        note_parts.append(f"第{show.episode}集")
+    if show.genre:
+        note_parts.append(show.genre)
+    if show.rating:
+        note_parts.append(f"⭐{show.rating}")
+
+    return {
+        "name": name,
+        "title_cn": show.title_cn,
+        "title_en": show.title_en,
+        "year": show.year,
+        "show_type": _type_display(show.show_type),
+        "status": _status_display(show.status),
+        "reminder_type": reminder_type,
+        "event_label": event_label,
+        "date": reminder_date.isoformat() if reminder_date else "",
+        "sort_date": reminder_date or date.min,
+        "season_ep": season_ep,
+        "season": show.season,
+        "episode": show.episode,
+        "platform": show.platform or "未知平台",
+        "genre": show.genre or "",
+        "rating": show.rating,
+        "note": " | ".join(note_parts),
+        "missing_fields": show.missing_fields(),
+    }
+
+
+def export_subscription_reminders(
+    db: ShowDatabase,
+    output: Path,
+    fmt: ExportFormat = "markdown",
+) -> Path:
+    data = generate_subscription_reminders(db)
+    if fmt == "json":
+        return _export_subscription_json(data, output)
+    elif fmt == "csv":
+        return _export_subscription_csv(data, output)
+    else:
+        return _export_subscription_markdown(data, output)
+
+
+def _export_subscription_markdown(data: dict, output: Path) -> Path:
+    lines = []
+    lines.append("# 🔔 影视更新订阅提醒")
+    lines.append(f"> 生成时间：{data['generated_at']} | 共追踪 {data['total_count']} 部\n")
+
+    section_order = ["today", "week", "month"]
+    for key in section_order:
+        section = data["sections"][key]
+        if section["total"] == 0:
+            continue
+
+        lines.append(f"## {section['label']}")
+        lines.append(f"> {section['date_range']} | 更新 {section['updates_count']} 部 / 新上线 {section['new_releases_count']} 部 / 共 {section['total']} 条\n")
+
+        if section["updates"]:
+            lines.append(f"### 📺 剧集更新\n")
+            lines.append("| 日期 | 片名 | 季集 | 平台 | 类型 | 备注 |")
+            lines.append("|------|------|------|------|------|------|")
+            for item in section["updates"]:
+                lines.append(
+                    f"| {item['date']} | {item['name']} | {item['season_ep'] or '-'} | {item['platform']} | "
+                    f"{item['show_type']} | {item['note'] or '-'} |"
+                )
+            lines.append("")
+
+        if section["new_releases"]:
+            lines.append(f"### 🎬 新上线\n")
+            lines.append("| 日期 | 片名 | 年份 | 平台 | 类型 | 备注 |")
+            lines.append("|------|------|------|------|------|------|")
+            for item in section["new_releases"]:
+                year = str(item["year"]) if item["year"] else "-"
+                lines.append(
+                    f"| {item['date']} | {item['name']} | {year} | {item['platform']} | "
+                    f"{item['show_type']} | {item['note'] or '-'} |"
+                )
+            lines.append("")
+
+    has_content = any(data["sections"][k]["total"] > 0 for k in section_order)
+    if not has_content:
+        lines.append("## ✨ 近期无更新")
+        lines.append("> 订阅的影视在未来30天内暂无更新安排\n")
+
+    output.write_text("\n".join(lines), encoding="utf-8")
+    return output
+
+
+def _export_subscription_csv(data: dict, output: Path) -> Path:
+    headers = [
+        "window", "window_label", "date_range", "reminder_type", "event_label",
+        "date", "title_cn", "title_en", "year", "show_type", "status",
+        "season", "episode", "season_ep", "platform", "genre", "rating", "note", "missing_fields",
+    ]
+
+    section_order = ["today", "week", "month"]
+
+    with open(output, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        for key in section_order:
+            section = data["sections"][key]
+            for item in section["updates"] + section["new_releases"]:
+                row = {
+                    "window": key,
+                    "window_label": section["label"],
+                    "date_range": section["date_range"],
+                    "reminder_type": item["reminder_type"],
+                    "event_label": item["event_label"],
+                    "date": item["date"],
+                    "title_cn": item.get("title_cn", ""),
+                    "title_en": item.get("title_en", ""),
+                    "year": item.get("year", ""),
+                    "show_type": item.get("show_type", ""),
+                    "status": item.get("status", ""),
+                    "season": item.get("season", ""),
+                    "episode": item.get("episode", ""),
+                    "season_ep": item.get("season_ep", ""),
+                    "platform": item.get("platform", ""),
+                    "genre": item.get("genre", ""),
+                    "rating": item.get("rating", ""),
+                    "note": item.get("note", ""),
+                }
+                mf = item.get("missing_fields", [])
+                if mf:
+                    row["missing_fields"] = "; ".join(mf)
+                writer.writerow(row)
+    return output
+
+
+def _export_subscription_json(data: dict, output: Path) -> Path:
+    for section in data["sections"].values():
+        for item in section["updates"] + section["new_releases"]:
+            if "sort_date" in item:
+                del item["sort_date"]
+    output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return output
+
+
+def apply_supplement(db: ShowDatabase, supplement_path: Path) -> dict:
+    import pandas as pd
+
+    stats = {
+        "matched": 0,
+        "fields_updated": 0,
+        "platform_updated": 0,
+        "director_updated": 0,
+        "cast_updated": 0,
+        "genre_updated": 0,
+        "not_found": 0,
+    }
+
+    if supplement_path.suffix in (".xlsx", ".xls"):
+        df = pd.read_excel(supplement_path)
+    else:
+        df = pd.read_csv(supplement_path)
+
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    for _, row in df.iterrows():
+        title = str(
+            row.get("title_cn") or row.get("title_en") or row.get("title") or
+            row.get("name") or row.get("片名") or ""
+        ).strip()
+        if not title:
+            continue
+
+        matched = None
+        for show in db.shows:
+            show_titles = [t for t in [show.title_cn, show.title_en] if t]
+            if any(t == title for t in show_titles):
+                matched = show
+                break
+
+        if not matched:
+            for show in db.shows:
+                show_titles = [t.lower() for t in [show.title_cn, show.title_en] if t]
+                title_lower = title.lower()
+                if any(title_lower in t or t in title_lower for t in show_titles):
+                    matched = show
+                    break
+
+        if not matched:
+            stats["not_found"] += 1
+            continue
+
+        stats["matched"] += 1
+
+        update_fields = [
+            ("platform", "platform"),
+            ("director", "director"),
+            ("cast", "cast"),
+            ("genre", "genre"),
+            ("release_date", "release_date"),
+            ("first_air_date", "first_air_date"),
+            ("air_date", "first_air_date"),
+            ("next_episode_date", "next_episode_date"),
+            ("last_air_date", "last_air_date"),
+            ("season", "season"),
+            ("episode", "episode"),
+            ("duration", "duration"),
+            ("poster_url", "poster_url"),
+            ("rating", "rating"),
+            ("notes", "notes"),
+        ]
+
+        from .models import _parse_date
+
+        for src, dst in update_fields:
+            val = row.get(src)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                continue
+
+            current_val = getattr(matched, dst)
+            if current_val and current_val != "" and current_val != ShowType.UNKNOWN and current_val != ShowStatus.UNKNOWN:
+                continue
+
+            if dst in ("release_date", "first_air_date", "last_air_date", "next_episode_date"):
+                parsed = _parse_date(str(val).strip())
+                if parsed:
+                    setattr(matched, dst, parsed)
+                    stats["fields_updated"] += 1
+            elif dst == "season" or dst == "episode":
+                try:
+                    setattr(matched, dst, int(val))
+                    stats["fields_updated"] += 1
+                except (ValueError, TypeError):
+                    pass
+            elif dst == "rating":
+                try:
+                    setattr(matched, dst, float(val))
+                    stats["fields_updated"] += 1
+                except (ValueError, TypeError):
+                    pass
+            else:
+                val_str = str(val).strip()
+                if val_str:
+                    setattr(matched, dst, val_str)
+                    stats["fields_updated"] += 1
+                    if dst == "platform":
+                        stats["platform_updated"] += 1
+                    elif dst == "director":
+                        stats["director_updated"] += 1
+                    elif dst == "cast":
+                        stats["cast_updated"] += 1
+                    elif dst == "genre":
+                        stats["genre_updated"] += 1
+
+    db.save()
+    return stats
