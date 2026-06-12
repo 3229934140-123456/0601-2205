@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from .models import Show, ShowDatabase, ShowStatus, ShowType
@@ -12,36 +12,91 @@ def generate_watchlist(db: ShowDatabase, status: ShowStatus | None = None, show_
         shows = [s for s in shows if s.status == status]
     if show_type:
         shows = [s for s in shows if s.show_type == show_type]
-    shows.sort(key=lambda s: (s.year or 0, s.title_cn or s.title_en), reverse=True)
+    shows.sort(key=lambda s: _sort_key(s), reverse=True)
     return shows
+
+
+def _sort_key(show: Show) -> tuple:
+    d = show.primary_date()
+    if d:
+        return (1, d.toordinal(), show.title_cn or show.title_en)
+    return (0, show.year or 0, show.title_cn or show.title_en)
 
 
 def generate_update_reminders(db: ShowDatabase) -> list[dict]:
     reminders = []
     airing = [s for s in db.shows if s.status == ShowStatus.AIRING]
-    for show in airing:
-        reminders.append({
+    today = date.today()
+
+    sorted_airing = sorted(airing, key=lambda s: (
+        (s.next_episode_date or date.min).toordinal(),
+        s.title_cn or s.title_en
+    ), reverse=False)
+
+    for show in sorted_airing:
+        has_next = show.next_episode_date is not None
+        next_date = show.next_episode_date
+        days_until = None
+        if next_date:
+            days_until = (next_date - today).days
+
+        reminder = {
             "title_cn": show.title_cn,
             "title_en": show.title_en,
             "season": show.season,
             "episode": show.episode,
+            "next_episode_date": next_date.isoformat() if next_date else "",
+            "days_until": days_until,
             "platform": show.platform,
-            "message": _build_reminder_message(show),
-        })
+            "has_next_date": has_next,
+            "message": _build_reminder_message(show, today),
+        }
+        reminders.append(reminder)
+
+    reminders.sort(key=lambda r: (
+        0 if r["has_next_date"] and r["days_until"] is not None and r["days_until"] >= 0 else 1,
+        r["days_until"] if r["days_until"] is not None else 9999,
+        r["title_cn"] or r["title_en"]
+    ))
+
     return reminders
 
 
-def _build_reminder_message(show: Show) -> str:
-    parts = []
+def _build_reminder_message(show: Show, today: date) -> str:
     name = show.title_cn or show.title_en
-    if show.season:
-        parts.append(f"S{show.season:02d}")
-    if show.episode:
-        parts.append(f"E{show.episode:02d}")
-    season_ep = " ".join(parts)
     platform = show.platform or "未知平台"
+
+    if show.next_episode_date:
+        next_date = show.next_episode_date
+        season_str = f"S{show.season:02d}" if show.season else ""
+        ep_str = f"E{show.episode:02d}" if show.episode else ""
+        season_ep = f"{season_str}{ep_str}".strip()
+
+        days_until = (next_date - today).days
+        if days_until < 0:
+            when = f"已于 {next_date.isoformat()} 更新"
+        elif days_until == 0:
+            when = "今天更新"
+        elif days_until == 1:
+            when = "明天更新"
+        elif days_until <= 7:
+            when = f"{days_until} 天后更新"
+        else:
+            when = f"{next_date.isoformat()} 更新"
+
+        if season_ep:
+            return f"📅 {name} {season_ep} 将于 {when} [{platform}]"
+        else:
+            return f"📅 {name} 将于 {when} [{platform}]"
+
+    season_ep = ""
+    if show.season:
+        season_ep += f"S{show.season:02d}"
+    if show.episode:
+        season_ep += f"E{show.episode:02d}"
+
     if season_ep:
-        return f"📺 {name} {season_ep} 已在 {platform} 更新"
+        return f"📺 {name} {season_ep} 正在 {platform} 热播中"
     return f"📺 {name} 正在 {platform} 播出中"
 
 
@@ -109,6 +164,12 @@ def generate_weekly_summary(db: ShowDatabase) -> dict:
     ended = [s for s in db.shows if s.status == ShowStatus.ENDED]
     translation_needed = generate_translation_list(db)
 
+    airing_with_next = [s for s in airing if s.next_episode_date]
+    airing_without_next = [s for s in airing if not s.next_episode_date]
+    airing_sorted = sorted(airing_with_next, key=lambda s: s.next_episode_date or date.min) + airing_without_next
+
+    upcoming_sorted = sorted(upcoming, key=lambda s: s.primary_date() or date.max)
+
     return {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "total": len(db.shows),
@@ -116,8 +177,8 @@ def generate_weekly_summary(db: ShowDatabase) -> dict:
         "upcoming_count": len(upcoming),
         "ended_count": len(ended),
         "translation_pending_count": len(translation_needed),
-        "airing_shows": [_show_brief(s) for s in airing[:20]],
-        "upcoming_shows": [_show_brief(s) for s in upcoming[:10]],
+        "airing_shows": [_show_brief(s) for s in airing_sorted[:20]],
+        "upcoming_shows": [_show_brief(s) for s in upcoming_sorted[:10]],
         "translation_list": translation_needed[:10],
     }
 
@@ -127,6 +188,9 @@ def _show_brief(show: Show) -> dict:
         "title_cn": show.title_cn,
         "title_en": show.title_en,
         "year": show.year,
+        "release_date": show.release_date.isoformat() if show.release_date else "",
+        "first_air_date": show.first_air_date.isoformat() if show.first_air_date else "",
+        "next_episode_date": show.next_episode_date.isoformat() if show.next_episode_date else "",
         "season": show.season,
         "episode": show.episode,
         "platform": show.platform,

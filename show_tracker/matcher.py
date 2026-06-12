@@ -1,21 +1,32 @@
 from __future__ import annotations
 
 import os
+from datetime import date, datetime
 from typing import Optional
 
 import httpx
 
-from .models import Show, ShowDatabase, ShowType, ShowStatus
+from .models import Show, ShowDatabase, ShowType, ShowStatus, _parse_date
 
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
 
+STREAMING_KEYWORDS = [
+    "Netflix", "Disney+", "Disney Plus", "HBO Max", "HBO", "Amazon Prime Video",
+    "Prime Video", "Apple TV+", "Apple TV", "Hulu", "Paramount+", "Peacock",
+    "Max", "Crunchyroll", "Funimation", "Disney+ Hotstar", "Hotstar",
+    "腾讯视频", "爱奇艺", "优酷", "芒果TV", "芒果 TV", "B站", "bilibili",
+    "哔哩哔哩", "iQIYI", "Youku", "Mango TV", "Tencent Video",
+]
+
+
 class TMDBClient:
-    def __init__(self, api_key: str | None = None, language: str = "zh-CN"):
+    def __init__(self, api_key: str | None = None, language: str = "zh-CN", region: str = "US"):
         self.api_key = api_key or os.getenv("TMDB_API_KEY", "")
         self.language = language
+        self.region = region
         self.client = httpx.Client(timeout=15.0)
 
     def _get(self, path: str, params: dict | None = None) -> dict | None:
@@ -46,10 +57,16 @@ class TMDBClient:
         return result.get("results", [])[:5] if result else []
 
     def get_movie_detail(self, movie_id: int) -> dict | None:
-        return self._get(f"/movie/{movie_id}", {"append_to_response": "credits"})
+        return self._get(f"/movie/{movie_id}", {"append_to_response": "credits,release_dates"})
 
     def get_tv_detail(self, tv_id: int) -> dict | None:
-        return self._get(f"/tv/{tv_id}", {"append_to_response": "credits"})
+        return self._get(f"/tv/{tv_id}", {"append_to_response": "credits,next_episode_to_air,last_episode_to_air"})
+
+    def get_movie_watch_providers(self, movie_id: int) -> dict | None:
+        return self._get(f"/movie/{movie_id}/watch/providers")
+
+    def get_tv_watch_providers(self, tv_id: int) -> dict | None:
+        return self._get(f"/tv/{tv_id}/watch/providers")
 
     def match_show(self, show: Show) -> Optional[dict]:
         query = show.title_en or show.title_cn
@@ -85,25 +102,102 @@ class TMDBClient:
         else:
             return self.get_movie_detail(tmdb_id)
 
+    def get_platforms(self, tmdb_id: int, is_tv: bool) -> str:
+        if is_tv:
+            providers = self.get_tv_watch_providers(tmdb_id)
+        else:
+            providers = self.get_movie_watch_providers(tmdb_id)
+
+        if not providers or not providers.get("results"):
+            return ""
+
+        results = providers["results"]
+        regions_to_try = [self.region, "US", "CN", "JP", "GB"]
+
+        for region in regions_to_try:
+            region_data = results.get(region)
+            if not region_data:
+                continue
+            flatrate = region_data.get("flatrate", [])
+            if flatrate:
+                names = [p.get("provider_name", "") for p in flatrate if p.get("provider_name")]
+                if names:
+                    return "/".join(dict.fromkeys(names[:3]))
+
+        for region in regions_to_try:
+            region_data = results.get(region)
+            if not region_data:
+                continue
+            buy = region_data.get("buy", [])
+            rent = region_data.get("rent", [])
+            all_providers = buy + rent
+            if all_providers:
+                names = [p.get("provider_name", "") for p in all_providers if p.get("provider_name")]
+                if names:
+                    return "/".join(dict.fromkeys(names[:3]))
+
+        return ""
+
     def enrich_show(self, show: Show) -> bool:
         detail = self.match_show(show)
         if not detail:
             return False
 
-        show.tmdb_id = detail.get("id")
+        tmdb_id = detail.get("id")
+        if tmdb_id:
+            show.tmdb_id = tmdb_id
+
+        is_tv = show.show_type in (ShowType.TV, ShowType.ANIME, ShowType.VARIETY)
+        if not is_tv and (detail.get("first_air_date") or detail.get("number_of_seasons")):
+            is_tv = True
+            if show.show_type == ShowType.UNKNOWN:
+                show.show_type = ShowType.TV
+        elif not is_tv and detail.get("release_date") and show.show_type == ShowType.UNKNOWN:
+            show.show_type = ShowType.MOVIE
 
         if not show.title_cn:
             show.title_cn = detail.get("name", "") or detail.get("title", "")
         if not show.title_en:
             show.title_en = detail.get("original_name", "") or detail.get("original_title", "")
 
-        if not show.year:
-            date_str = detail.get("first_air_date", "") or detail.get("release_date", "")
-            if date_str:
-                try:
-                    show.year = int(date_str[:4])
-                except (ValueError, IndexError):
-                    pass
+        release_str = detail.get("release_date", "") or detail.get("first_air_date", "")
+        if release_str and not show.year:
+            try:
+                show.year = int(release_str[:4])
+            except (ValueError, IndexError):
+                pass
+
+        if release_str:
+            parsed_release = _parse_date(release_str)
+            if parsed_release:
+                if is_tv:
+                    if not show.first_air_date:
+                        show.first_air_date = parsed_release
+                else:
+                    if not show.release_date:
+                        show.release_date = parsed_release
+                if not show.year:
+                    show.year = parsed_release.year
+
+        last_air_str = detail.get("last_air_date", "")
+        if last_air_str and is_tv and not show.last_air_date:
+            parsed = _parse_date(last_air_str)
+            if parsed:
+                show.last_air_date = parsed
+
+        next_ep = detail.get("next_episode_to_air")
+        if next_ep and isinstance(next_ep, dict):
+            ep_date_str = next_ep.get("air_date", "")
+            if ep_date_str and not show.next_episode_date:
+                parsed = _parse_date(ep_date_str)
+                if parsed:
+                    show.next_episode_date = parsed
+                    ep_num = next_ep.get("episode_number")
+                    if ep_num and not show.episode:
+                        show.episode = ep_num
+                    season_num = next_ep.get("season_number")
+                    if season_num and not show.season:
+                        show.season = season_num
 
         if not show.genre and detail.get("genres"):
             show.genre = "/".join(g["name"] for g in detail["genres"])
@@ -122,7 +216,7 @@ class TMDBClient:
         if not show.rating and detail.get("vote_average"):
             show.rating = round(detail["vote_average"], 1)
 
-        if detail.get("status"):
+        if detail.get("status") and show.status == ShowStatus.UNKNOWN:
             status_map = {
                 "Released": ShowStatus.ENDED,
                 "Post Production": ShowStatus.UPCOMING,
@@ -132,9 +226,11 @@ class TMDBClient:
                 "Canceled": ShowStatus.CANCELLED,
                 "Planned": ShowStatus.UPCOMING,
                 "Pilot": ShowStatus.UPCOMING,
+                "Filming": ShowStatus.AIRING,
+                "Pre-production": ShowStatus.UPCOMING,
             }
             mapped = status_map.get(detail["status"])
-            if mapped and show.status == ShowStatus.UNKNOWN:
+            if mapped:
                 show.status = mapped
 
         credits = detail.get("credits", {})
@@ -149,25 +245,22 @@ class TMDBClient:
                 if cast_list:
                     show.cast = "/".join(c["name"] for c in cast_list)
 
-        networks = detail.get("networks") or detail.get("production_companies", [])
-        if not show.platform and networks:
-            show.platform = "/".join(n["name"] for n in networks[:3])
-
-        if show.show_type == ShowType.UNKNOWN:
-            media_type = detail.get("media_type", "")
-            if detail.get("first_air_date") or detail.get("number_of_seasons"):
-                show.show_type = ShowType.TV
-            elif detail.get("release_date"):
-                show.show_type = ShowType.MOVIE
+        if tmdb_id and not show.platform:
+            platforms = self.get_platforms(tmdb_id, is_tv)
+            if platforms:
+                show.platform = platforms
 
         if not show.season and detail.get("number_of_seasons"):
             show.season = detail["number_of_seasons"]
 
+        if detail.get("imdb_id") and not show.imdb_id:
+            show.imdb_id = detail["imdb_id"]
+
         return True
 
 
-def match_all(db: ShowDatabase, api_key: str | None = None, only_missing: bool = True) -> dict:
-    client = TMDBClient(api_key)
+def match_all(db: ShowDatabase, api_key: str | None = None, only_missing: bool = True, region: str = "US") -> dict:
+    client = TMDBClient(api_key, region=region)
     stats = {"matched": 0, "skipped": 0, "failed": 0}
 
     if not client.api_key:

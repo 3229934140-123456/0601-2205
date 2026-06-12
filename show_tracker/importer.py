@@ -59,6 +59,10 @@ def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
         "title_cn": "title_cn",
         "title_en": "title_en",
         "year": "year",
+        "release_date": "release_date",
+        "first_air_date": "first_air_date",
+        "last_air_date": "last_air_date",
+        "next_episode_date": "next_episode_date",
         "season": "season",
         "episode": "episode",
         "director": "director",
@@ -69,7 +73,7 @@ def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
         "poster_url": "poster_url",
         "notes": "notes",
     }
-    from .models import ShowType, ShowStatus, _STATUS_MAP, _TYPE_MAP
+    from .models import ShowType, ShowStatus, _STATUS_MAP, _TYPE_MAP, _parse_date
 
     for attr, col_name in field_map.items():
         mapped = col_map.get(col_name.lower(), col_name)
@@ -83,6 +87,12 @@ def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
                 setattr(show, attr, int(val))
             except (ValueError, TypeError):
                 pass
+        elif attr in ("release_date", "first_air_date", "last_air_date", "next_episode_date"):
+            parsed = _parse_date(val)
+            if parsed:
+                setattr(show, attr, parsed)
+                if attr in ("release_date", "first_air_date") and not show.year:
+                    show.year = parsed.year
         elif attr == "season":
             try:
                 setattr(show, attr, int(val))
@@ -99,8 +109,9 @@ def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
     status_col = col_map.get("status", "status")
     status_val = str(row.get(status_col, "")).strip()
     if status_val:
+        status_val_lower = status_val.lower()
         for kw, st in _STATUS_MAP.items():
-            if kw in status_val:
+            if kw in status_val or kw.lower() == status_val_lower or st.value == status_val_lower:
                 show.status = st
                 break
 
@@ -108,6 +119,6 @@ def _fill_from_row(show: Show, row: pd.Series, col_map: dict[str, str]) -> None:
     type_val = str(row.get(type_col, "")).strip().lower()
     if type_val:
         for kw, st in _TYPE_MAP.items():
-            if kw.lower() == type_val or kw in type_val:
+            if kw.lower() == type_val or kw.lower() in type_val or st.value == type_val:
                 show.show_type = st
                 break

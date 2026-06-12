@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -70,10 +71,11 @@ def clean_cmd(
 def match_cmd(
     db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
     api_key: Optional[str] = typer.Option(None, "--api-key", help="TMDB API Key"),
+    region: str = typer.Option("US", "--region", help="流媒体平台地区（US/CN/JP/GB 等）"),
     all_shows: bool = typer.Option(False, "--all", help="匹配所有条目（默认只匹配有缺失字段的）"),
 ):
     database = ShowDatabase(_db_path(db))
-    result = match_all(database, api_key, only_missing=not all_shows)
+    result = match_all(database, api_key, only_missing=not all_shows, region=region)
     if "error" in result:
         console.print(f"[red]✗ {result['error']}[/red]")
         raise typer.Exit(1)
@@ -163,7 +165,7 @@ def export_cmd(
     output: Path = typer.Argument(..., help="输出文件路径"),
     db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
     fmt: str = typer.Option("markdown", "--format", help="输出格式：markdown / csv / json"),
-    group_by: Optional[str] = typer.Option(None, "--group-by", help="分组方式：year / genre / platform / status / type"),
+    group_by: Optional[str] = typer.Option(None, "--group-by", help="分组方式：year / year-month / release_date / next_update / recent / genre / platform / status / type"),
     status: Optional[str] = typer.Option(None, "--status", help="按状态筛选"),
     show_type: Optional[str] = typer.Option(None, "--type", help="按类型筛选"),
 ):
@@ -177,9 +179,10 @@ def list_cmd(
     db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
     status: Optional[str] = typer.Option(None, "--status", help="按状态筛选"),
     show_type: Optional[str] = typer.Option(None, "--type", help="按类型筛选"),
+    sort_by: str = typer.Option("date", "--sort", help="排序方式：date / title / rating"),
 ):
     database = ShowDatabase(_db_path(db))
-    shows = database.shows
+    shows = list(database.shows)
 
     if status:
         try:
@@ -194,10 +197,18 @@ def list_cmd(
         except ValueError:
             pass
 
+    if sort_by == "date":
+        shows.sort(key=lambda s: (s.primary_date() or date.min), reverse=True)
+    elif sort_by == "title":
+        shows.sort(key=lambda s: s.title_cn or s.title_en)
+    elif sort_by == "rating":
+        shows.sort(key=lambda s: s.rating or 0, reverse=True)
+
     table = Table(title=f"影视追踪库（共 {len(shows)} 条）")
     table.add_column("中文名", style="cyan", max_width=20)
     table.add_column("英文名", style="cyan", max_width=25)
-    table.add_column("年份", width=6)
+    table.add_column("上线日期", width=12)
+    table.add_column("下一集", width=12)
     table.add_column("类型", width=6)
     table.add_column("状态", width=8)
     table.add_column("季/集", width=8)
@@ -207,9 +218,10 @@ def list_cmd(
     for show in shows:
         name = show.title_cn or "-"
         en = show.title_en or "-"
-        year = str(show.year) if show.year else "-"
+        release_date = show.primary_date().isoformat() if show.primary_date() else "-"
+        next_date = show.next_episode_date.isoformat() if show.next_episode_date else "-"
         stype = _type_short(show.show_type)
-        status = _status_short(show.status)
+        st = _status_short(show.status)
         season_ep = ""
         if show.season:
             season_ep += f"S{show.season:02d}"
@@ -223,7 +235,7 @@ def list_cmd(
         if missing:
             name = f"{name} ⚠️"
 
-        table.add_row(name, en, year, stype, status, season_ep, platform, rating)
+        table.add_row(name, en, release_date, next_date, stype, st, season_ep, platform, rating)
 
     console.print(table)
 
@@ -251,26 +263,30 @@ def _print_watchlist(shows: list[Show]) -> None:
         return
     table = Table(title="📺 追剧清单")
     table.add_column("片名", style="cyan")
-    table.add_column("年份")
+    table.add_column("上线日期")
     table.add_column("类型")
     table.add_column("状态")
     table.add_column("季/集")
     table.add_column("平台")
+    table.add_column("下集")
 
     for s in shows:
         name = s.title_cn or s.title_en or "-"
+        release_date = s.primary_date().isoformat() if s.primary_date() else "-"
         season_ep = ""
         if s.season:
             season_ep += f"S{s.season:02d}"
         if s.episode:
             season_ep += f"E{s.episode:02d}"
+        next_ep = s.next_episode_date.isoformat() if s.next_episode_date else "-"
         table.add_row(
             name,
-            str(s.year or "-"),
+            release_date,
             _type_short(s.show_type),
             _status_short(s.status),
             season_ep or "-",
             s.platform or "-",
+            next_ep,
         )
     console.print(table)
 

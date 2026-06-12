@@ -1,0 +1,21 @@
+﻿group_name,group_category,title_cn,title_en,year,release_date,first_air_date,last_air_date,next_episode_date,show_type,status,season,episode,director,cast,genre,duration,platform,poster_url,rating,tmdb_id,imdb_id,notes,missing_fields
+2024-06,年月,庆余年第二季,,2024,,2024-05-16,,2024-06-15,tv,airing,,,,,古装/剧情,,爱奇艺,,,,,,title_en; release_date; last_air_date; season; episode; director; cast; duration; poster_url
+2024-06,年月,,House of the Dragon,2024,2024-06-16,2024-06-16,,,unknown,unknown,2,,,,,,,,,,,,title_cn; last_air_date; next_episode_date; show_type; status; episode; director; cast; genre; duration; platform; poster_url
+2024-04,年月,,Fallout,2024,2024-04-11,2024-04-11,,,unknown,unknown,1,,,,,,,,,,,,title_cn; last_air_date; next_episode_date; show_type; status; episode; director; cast; genre; duration; platform; poster_url
+2024-03,年月,沙丘2,Dune Part Two,2024,2024-03-01,2024-03-01,,,movie,unknown,,,,,,,,,,,,,last_air_date; next_episode_date; status; season; episode; director; cast; genre; duration; platform; poster_url
+2024-03,年月,哥斯拉大战金刚2,,2024,2024-03-29,2024-03-29,,,unknown,unknown,,,,,,,,,,,,,title_en; last_air_date; next_episode_date; show_type; status; season; episode; director; cast; genre; duration; platform; poster_url
+2024-03,年月,花间令 古装剧,,2024,2024-03-15,2024-03-15,,,unknown,unknown,,,,,,,,,,,,,title_en; last_air_date; next_episode_date; show_type; status; season; episode; director; cast; genre; duration; platform; poster_url
+2024-03,年月,与凤行,,2024,2024-03-18,2024-03-18,,,tv,unknown,,,,,,,,,,,,,title_en; last_air_date; next_episode_date; status; season; episode; director; cast; genre; duration; platform; poster_url
+2024-02,年月,,Shogun,2024,,2024-02-27,,,tv,airing,,,,,历史/剧情,,Hulu,,,,,,title_cn; release_date; last_air_date; next_episode_date; season; episode; director; cast; duration; poster_url
+2024-01,年月,三体,,2024,,2024-01-15,,,tv,airing,,,,,科幻/悬疑,,腾讯视频,,,,,,title_en; release_date; last_air_date; next_episode_date; season; episode; director; cast; duration; poster_url
+2023-12,年月,繁花,,2024,,2023-12-27,,,tv,ended,,,,,剧情/爱情,,腾讯视频,,,,,,title_en; release_date; last_air_date; next_episode_date; season; episode; director; cast; duration; poster_url
+2023-11,年月,蓝眼武士,Blue Eye Samurai,2023,2023-11-03,2023-11-03,,,anime,airing,,,,,,,,,,,,,last_air_date; next_episode_date; season; episode; director; cast; genre; duration; platform; poster_url
+2023-04,年月,漫长的季节,,2023,2023-04-22,2023-04-22,,,tv,ended,,,,,,,,,,,,,title_en; last_air_date; next_episode_date; season; episode; director; cast; genre; duration; platform; poster_url
+2023-03,年月,进击的巨人 最终季,,2023,,2023-03-04,,,anime,ended,,,,,动作/奇幻,,Crunchyroll,,,,,,title_en; release_date; last_air_date; next_episode_date; season; episode; director; cast; duration; poster_url
+2023-01,年月,,The Last of Us,2023,,2023-01-15,,,tv,ended,1,,,,Sci-Fi/Drama,,HBO Max,,,,,,title_cn; release_date; last_air_date; next_episode_date; episode; director; cast; duration; poster_url
+2023-01,年月,流浪地球2,,2023,2023-01-22,,,,movie,ended,,,,,科幻/冒险,,院线,,,,,,title_en; first_air_date; last_air_date; next_episode_date; season; episode; director; cast; duration; poster_url
+2023-01,年月,重启人生 日剧,,2023,2023-01-08,2023-01-08,,,unknown,ended,,,,,,,,,,,,,title_en; last_air_date; next_episode_date; show_type; season; episode; director; cast; genre; duration; platform; poster_url
+2021-11,年月,夏日幽灵,Summer Ghost,2021,2021-11-12,2021-11-12,,,anime,unknown,,,,,,,,,,,,,last_air_date; next_episode_date; status; season; episode; director; cast; genre; duration; platform; poster_url
+2021-09,年月,鱿鱼游戏,Squid Game,2021,,2021-09-17,,,tv,ended,,,,,惊悚/悬疑,,Netflix,,,,,,release_date; last_air_date; next_episode_date; season; episode; director; cast; duration; poster_url
+2016-08,年月,你的名字,,2016,2016-08-26,,,,movie,ended,,,,,动画/爱情,,,,,,,,title_en; first_air_date; last_air_date; next_episode_date; season; episode; director; cast; duration; platform; poster_url
+2008-01,年月,,Breaking Bad,2008,,2008-01-20,,,tv,ended,,,,,Crime/Drama,,AMC,,,,,,title_cn; release_date; last_air_date; next_episode_date; season; episode; director; cast; duration; poster_url

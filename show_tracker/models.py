@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field, fields
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -24,11 +25,40 @@ class ShowStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+def _parse_date(val: str | date | None) -> Optional[date]:
+    if val is None or val == "":
+        return None
+    if isinstance(val, date):
+        return val
+    val = str(val).strip()
+    formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y年%m月%d日",
+        "%Y-%m",
+        "%Y",
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(val, fmt).date()
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _date_to_str(d: Optional[date]) -> str:
+    return d.isoformat() if d else ""
+
+
 @dataclass
 class Show:
     title_cn: str = ""
     title_en: str = ""
     year: Optional[int] = None
+    release_date: Optional[date] = None
+    first_air_date: Optional[date] = None
+    last_air_date: Optional[date] = None
+    next_episode_date: Optional[date] = None
     show_type: ShowType = ShowType.UNKNOWN
     status: ShowStatus = ShowStatus.UNKNOWN
     season: Optional[int] = None
@@ -46,19 +76,40 @@ class Show:
     raw_title: str = ""
 
     _MISSING_FIELDS_KEY = "missing_fields"
+    _DATE_FIELDS = {
+        "release_date",
+        "first_air_date",
+        "last_air_date",
+        "next_episode_date",
+    }
 
     def missing_fields(self) -> list[str]:
         result = []
+        skip = {"raw_title", "notes", "tmdb_id", "imdb_id", "rating"}
         for f in fields(self):
-            if f.name in ("raw_title", "notes", "tmdb_id", "imdb_id", "rating"):
+            if f.name in skip:
                 continue
             val = getattr(self, f.name)
             if val is None or val == "" or val == ShowType.UNKNOWN or val == ShowStatus.UNKNOWN:
                 result.append(f.name)
         return result
 
+    def primary_date(self) -> Optional[date]:
+        if self.next_episode_date:
+            return self.next_episode_date
+        if self.first_air_date:
+            return self.first_air_date
+        if self.release_date:
+            return self.release_date
+        if self.last_air_date:
+            return self.last_air_date
+        return None
+
     def to_dict(self) -> dict:
         d = asdict(self)
+        for df in self._DATE_FIELDS:
+            val = getattr(self, df)
+            d[df] = _date_to_str(val)
         d[self._MISSING_FIELDS_KEY] = self.missing_fields()
         d["show_type"] = self.show_type.value
         d["status"] = self.status.value
@@ -69,10 +120,20 @@ class Show:
         d = dict(d)
         d.pop(cls._MISSING_FIELDS_KEY, None)
         if "show_type" in d and isinstance(d["show_type"], str):
-            d["show_type"] = ShowType(d["show_type"])
+            try:
+                d["show_type"] = ShowType(d["show_type"])
+            except ValueError:
+                d["show_type"] = ShowType.UNKNOWN
         if "status" in d and isinstance(d["status"], str):
-            d["status"] = ShowStatus(d["status"])
-        return cls(**{k: v for k, v in d.items() if k in {f.name for f in fields(cls)}})
+            try:
+                d["status"] = ShowStatus(d["status"])
+            except ValueError:
+                d["status"] = ShowStatus.UNKNOWN
+        for df in cls._DATE_FIELDS:
+            if df in d:
+                d[df] = _parse_date(d[df])
+        field_names = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in field_names})
 
 
 class ShowDatabase:
@@ -103,7 +164,7 @@ class ShowDatabase:
                 for f in fields(show):
                     new_val = getattr(show, f.name)
                     old_val = getattr(existing, f.name)
-                    if (old_val is None or old_val == "" or old_val == ShowType.UNKNOWN or old_val == ShowStatus.UNKNOWN) and new_val not in (None, "", ShowType.UNKNOWN, ShowStatus.UNKNOWN):
+                    if _is_better_value(old_val, new_val):
                         setattr(existing, f.name, new_val)
                 return existing
         self.shows.append(show)
@@ -115,6 +176,18 @@ class ShowDatabase:
             if s.title_cn.lower() == t or s.title_en.lower() == t:
                 return s
         return None
+
+
+def _is_better_value(old_val, new_val) -> bool:
+    if new_val is None or new_val == "":
+        return False
+    if old_val is None or old_val == "":
+        return True
+    if isinstance(old_val, ShowType) and old_val == ShowType.UNKNOWN:
+        return True
+    if isinstance(old_val, ShowStatus) and old_val == ShowStatus.UNKNOWN:
+        return True
+    return False
 
 
 def _is_duplicate(a: Show, b: Show) -> bool:
@@ -132,6 +205,7 @@ def _is_duplicate(a: Show, b: Show) -> bool:
 _CN_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 _EN_PATTERN = re.compile(r"[a-zA-Z]")
 _YEAR_PATTERN = re.compile(r"(?:19|20)\d{2}")
+_DATE_PATTERN = re.compile(r"(?:19|20)\d{2}[-/.年](?:0[1-9]|1[0-2])[-/.月](?:0[1-9]|[12]\d|3[01])日?")
 _SEASON_PATTERN = re.compile(r"[Ss](\d+)|第(\d+)季|Season\s*(\d+)", re.IGNORECASE)
 _EPISODE_PATTERN = re.compile(r"[Ee](\d+)|第(\d+)集|EP?(\d+)", re.IGNORECASE)
 _STATUS_MAP = {
@@ -162,8 +236,17 @@ def parse_raw_title(raw: str) -> Show:
     raw = raw.strip()
     show = Show(raw_title=raw)
 
+    date_match = _DATE_PATTERN.search(raw)
+    if date_match:
+        parsed = _parse_date(date_match.group())
+        if parsed:
+            show.release_date = parsed
+            show.first_air_date = parsed
+            if not show.year:
+                show.year = parsed.year
+
     year_match = _YEAR_PATTERN.search(raw)
-    if year_match:
+    if year_match and not show.year:
         show.year = int(year_match.group())
 
     season_match = _SEASON_PATTERN.search(raw)
@@ -191,7 +274,7 @@ def parse_raw_title(raw: str) -> Show:
             break
 
     cleaned = raw
-    for p in [_YEAR_PATTERN, _SEASON_PATTERN, _EPISODE_PATTERN]:
+    for p in [_DATE_PATTERN, _YEAR_PATTERN, _SEASON_PATTERN, _EPISODE_PATTERN]:
         cleaned = p.sub("", cleaned)
     for kw in list(_STATUS_MAP.keys()) + list(_TYPE_MAP.keys()):
         cleaned = cleaned.replace(kw, "")
