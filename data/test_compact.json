@@ -1,0 +1,88 @@
+{
+  "generated_at": "2026-06-13",
+  "total_count": 18,
+  "filtered_count": 18,
+  "filters": {
+    "platform": "",
+    "show_type": "",
+    "assignee": "",
+    "only_translated": false
+  },
+  "sections": {
+    "today": {
+      "label": "📅 今天",
+      "date_range": "2026-06-13 ~ 2026-06-13",
+      "days_from": 0,
+      "days_to": 0,
+      "updates": [],
+      "updates_count": 0,
+      "new_releases": [],
+      "new_releases_count": 0,
+      "total": 0
+    },
+    "week": {
+      "label": "🔜 未来7天",
+      "date_range": "2026-06-14 ~ 2026-06-20",
+      "days_from": 1,
+      "days_to": 7,
+      "updates": [
+        {
+          "name": "永夜星河",
+          "reminder_type": "update",
+          "date": "2026-06-14",
+          "season_ep": "",
+          "platform": "未知平台",
+          "note": "古装/悬疑"
+        },
+        {
+          "name": "Shogun",
+          "reminder_type": "update",
+          "date": "2026-06-15",
+          "season_ep": "",
+          "platform": "Hulu",
+          "note": "历史/剧情 / ⭐9.3"
+        },
+        {
+          "name": "Fallout",
+          "reminder_type": "update",
+          "date": "2026-06-18",
+          "season_ep": "S01",
+          "platform": "Prime Video",
+          "note": "Sci-Fi/Action / ⭐8.7"
+        },
+        {
+          "name": "庆余年第二季",
+          "reminder_type": "update",
+          "date": "2026-06-20",
+          "season_ep": "",
+          "platform": "爱奇艺",
+          "note": "古装/剧情 / ⭐8.9"
+        }
+      ],
+      "updates_count": 4,
+      "new_releases": [],
+      "new_releases_count": 0,
+      "total": 4
+    },
+    "month": {
+      "label": "📆 未来30天",
+      "date_range": "2026-06-21 ~ 2026-07-13",
+      "days_from": 8,
+      "days_to": 30,
+      "updates": [
+        {
+          "name": "House of the Dragon",
+          "reminder_type": "update",
+          "date": "2026-06-23",
+          "season_ep": "S02",
+          "platform": "HBO Max",
+          "note": "奇幻/剧情 / ⭐8.8"
+        }
+      ],
+      "updates_count": 1,
+      "new_releases": [],
+      "new_releases_count": 0,
+      "total": 1
+    }
+  }
+}

@@ -209,13 +209,25 @@ def remind_cmd(
     output: Path = typer.Argument(..., help="输出文件路径"),
     db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
     fmt: str = typer.Option("markdown", "--format", help="输出格式：markdown / csv / json"),
+    platform: Optional[str] = typer.Option(None, "--platform", help="按平台筛选"),
+    show_type: Optional[str] = typer.Option(None, "--type", help="按类型筛选：movie / tv / variety / anime"),
+    assignee: Optional[str] = typer.Option(None, "--assignee", help="按负责人筛选"),
+    only_translated: bool = typer.Option(False, "--only-translated", help="只显示已翻译的"),
+    compact: bool = typer.Option(False, "--compact", help="精简版（适合机器人/日历订阅）"),
 ):
     database = ShowDatabase(_db_path(db))
-    export_subscription_reminders(database, output, fmt)
+    export_subscription_reminders(
+        database, output, fmt,
+        platform=platform, show_type=show_type,
+        assignee=assignee, only_translated=only_translated,
+        compact=compact,
+    )
     console.print(f"[green]✓ 订阅提醒已导出到 {output}[/green]")
-    # 显示一下概览
     from .exporter import generate_subscription_reminders
-    data = generate_subscription_reminders(database)
+    data = generate_subscription_reminders(
+        database, platform=platform, show_type=show_type,
+        assignee=assignee, only_translated=only_translated,
+    )
     for key in ["today", "week", "month"]:
         sec = data["sections"][key]
         if sec["total"] > 0:
@@ -226,16 +238,24 @@ def remind_cmd(
 def supplement_cmd(
     supplement_file: Path = typer.Argument(..., help="补充表文件路径（CSV/Excel）"),
     db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
+    mode: str = typer.Option("fill", "--mode", help="更新模式：fill（只补缺失）/ overwrite（全部覆盖）/ check（仅检查冲突）"),
 ):
     database = ShowDatabase(_db_path(db))
     if not supplement_file.exists():
         console.print(f"[red]补充表不存在: {supplement_file}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[cyan]正在从补充表 {supplement_file} 补全资料...[/cyan]")
-    stats = apply_supplement(database, supplement_file)
+    if mode not in ("fill", "overwrite", "check"):
+        console.print(f"[red]未知模式: {mode}，请使用 fill / overwrite / check[/red]")
+        raise typer.Exit(1)
 
-    console.print(f"[green]✓ 补充完成[/green]")
+    console.print(f"[cyan]正在从补充表 {supplement_file} 补全资料（模式：{mode}）...[/cyan]")
+    stats = apply_supplement(database, supplement_file, mode=mode)
+
+    if mode == "check":
+        console.print(f"[cyan]✓ 检查完成，未修改数据[/cyan]")
+    else:
+        console.print(f"[green]✓ 补充完成[/green]")
     console.print(f"  匹配到: {stats['matched']} 条")
     console.print(f"  字段更新: {stats['fields_updated']} 处")
     if stats["platform_updated"]:
@@ -246,8 +266,104 @@ def supplement_cmd(
         console.print(f"    主演: {stats['cast_updated']} 处")
     if stats["genre_updated"]:
         console.print(f"    类型: {stats['genre_updated']} 处")
+    if stats["fields_skipped"]:
+        console.print(f"[yellow]  冲突跳过: {stats['fields_skipped']} 处[/yellow]")
     if stats["not_found"]:
         console.print(f"[yellow]  未匹配到: {stats['not_found']} 条[/yellow]")
+    if stats["conflicts"]:
+        console.print()
+        console.print(f"[yellow]⚠️ 发现 {len(stats['conflicts'])} 处字段冲突：[/yellow]")
+        conflict_table = Table(title="字段冲突列表")
+        conflict_table.add_column("片名", style="cyan")
+        conflict_table.add_column("字段")
+        conflict_table.add_column("现有值", style="green")
+        conflict_table.add_column("补充值", style="yellow")
+        for c in stats["conflicts"][:20]:
+            conflict_table.add_row(c["show_title"], c["field"], c["old_value"], c["new_value"])
+        console.print(conflict_table)
+        if len(stats["conflicts"]) > 20:
+            console.print(f"[dim]... 还有 {len(stats['conflicts']) - 20} 处冲突，请使用 --mode check 查看完整列表[/dim]")
+        console.print()
+        console.print("[yellow]提示：[/yellow]")
+        console.print("  --mode fill      只补缺失（默认）")
+        console.print("  --mode overwrite  全部覆盖补充表的值")
+        console.print("  --mode check      仅检查冲突不修改")
+
+
+@app.command("progress", help="管理追剧进度：标记已看集数、翻译状态、负责人")
+def progress_cmd(
+    title: str = typer.Argument(..., help="片名（中文名或英文名）"),
+    db: Optional[str] = typer.Option(None, "--db", help="数据库文件路径"),
+    watched_season: Optional[int] = typer.Option(None, "--watched-season", "--ws", help="已看季数"),
+    watched_episode: Optional[int] = typer.Option(None, "--watched-episode", "--we", help="已看集数"),
+    translated: Optional[str] = typer.Option(None, "--translated", help="翻译状态：yes / no"),
+    translator: Optional[str] = typer.Option(None, "--translator", help="译者"),
+    assignee: Optional[str] = typer.Option(None, "--assignee", help="负责人"),
+    show: bool = typer.Option(False, "--show", help="仅显示当前进度，不修改"),
+):
+    database = ShowDatabase(_db_path(db))
+    matched = None
+    title_lower = title.lower()
+    for s in database.shows:
+        if (s.title_cn and s.title_cn.lower() == title_lower) or \
+           (s.title_en and s.title_en.lower() == title_lower):
+            matched = s
+            break
+    if not matched:
+        for s in database.shows:
+            if (s.title_cn and title_lower in s.title_cn.lower()) or \
+               (s.title_en and title_lower in s.title_en.lower()):
+                matched = s
+                break
+
+    if not matched:
+        console.print(f"[red]未找到条目: {title}[/red]")
+        raise typer.Exit(1)
+
+    display_title = matched.title_cn or matched.title_en
+
+    if show:
+        console.print(f"[cyan]📺 {display_title} 的进度信息：[/cyan]")
+        if matched.watched_season or matched.watched_episode:
+            ws = matched.watched_season or 0
+            we = matched.watched_episode or 0
+            console.print(f"  观看进度: S{ws:02d}E{we:02d}")
+        else:
+            console.print(f"  观看进度: 未标记")
+        console.print(f"  翻译状态: {'已翻译' if matched.translated else '未翻译'}")
+        if matched.translator:
+            console.print(f"  译    者: {matched.translator}")
+        if matched.assignee:
+            console.print(f"  负 责 人: {matched.assignee}")
+        return
+
+    updated_fields = []
+    if watched_season is not None:
+        matched.watched_season = watched_season
+        updated_fields.append(f"已看季={watched_season}")
+    if watched_episode is not None:
+        matched.watched_episode = watched_episode
+        updated_fields.append(f"已看集={watched_episode}")
+    if translated is not None:
+        translated_bool = translated.lower() in ("yes", "true", "1", "是", "已翻译")
+        matched.translated = translated_bool
+        updated_fields.append(f"翻译={'已翻译' if translated_bool else '未翻译'}")
+    if translator is not None:
+        matched.translator = translator if translator.lower() != "none" else ""
+        updated_fields.append(f"译者={matched.translator or '清空'}")
+    if assignee is not None:
+        matched.assignee = assignee if assignee.lower() != "none" else ""
+        updated_fields.append(f"负责人={matched.assignee or '清空'}")
+
+    if not updated_fields:
+        console.print("[yellow]未指定任何要修改的字段，请使用 --ws/--we/--translated/--translator/--assignee[/yellow]")
+        console.print("[yellow]或使用 --show 查看当前进度[/yellow]")
+        raise typer.Exit(1)
+
+    database.save()
+    console.print(f"[green]✓ {display_title} 进度已更新[/green]")
+    for f in updated_fields:
+        console.print(f"  {f}")
 
 
 @app.command("list", help="列出数据库中所有影片")
@@ -281,14 +397,16 @@ def list_cmd(
         shows.sort(key=lambda s: s.rating or 0, reverse=True)
 
     table = Table(title=f"影视追踪库（共 {len(shows)} 条）")
-    table.add_column("中文名", style="cyan", max_width=20)
-    table.add_column("英文名", style="cyan", max_width=25)
+    table.add_column("中文名", style="cyan", max_width=18)
+    table.add_column("英文名", style="cyan", max_width=20)
     table.add_column("上线日期", width=12)
     table.add_column("下一集", width=12)
-    table.add_column("类型", width=6)
+    table.add_column("类型", width=5)
     table.add_column("状态", width=8)
-    table.add_column("季/集", width=8)
-    table.add_column("平台", max_width=15)
+    table.add_column("已看", width=9)
+    table.add_column("翻译", width=6)
+    table.add_column("负责人", max_width=10)
+    table.add_column("平台", max_width=12)
     table.add_column("评分", width=5)
 
     for show in shows:
@@ -298,20 +416,22 @@ def list_cmd(
         next_date = show.next_episode_date.isoformat() if show.next_episode_date else "-"
         stype = _type_short(show.show_type)
         st = _status_short(show.status)
-        season_ep = ""
-        if show.season:
-            season_ep += f"S{show.season:02d}"
-        if show.episode:
-            season_ep += f"E{show.episode:02d}"
-        if not season_ep:
-            season_ep = "-"
+        watched = ""
+        if show.watched_season:
+            watched += f"S{show.watched_season:02d}"
+        if show.watched_episode:
+            watched += f"E{show.watched_episode:02d}"
+        if not watched:
+            watched = "-"
+        translated_str = "✓" if show.translated else "-"
+        assignee = show.assignee or "-"
         platform = show.platform or "-"
         rating = str(show.rating) if show.rating else "-"
         missing = show.missing_fields()
         if missing:
             name = f"{name} ⚠️"
 
-        table.add_row(name, en, release_date, next_date, stype, st, season_ep, platform, rating)
+        table.add_row(name, en, release_date, next_date, stype, st, watched, translated_str, assignee, platform, rating)
 
     console.print(table)
 

@@ -705,6 +705,12 @@ def _show_brief_for_weekly(show: Show, include_missing: bool = False) -> dict:
         "platform": show.platform or "未知平台",
         "genre": show.genre,
         "rating": show.rating,
+        "watched_season": show.watched_season,
+        "watched_episode": show.watched_episode,
+        "translated": show.translated,
+        "translator": show.translator,
+        "assignee": show.assignee,
+        "progress": show.progress_summary(),
     }
     if include_missing:
         brief["missing_fields"] = show.missing_fields()
@@ -742,8 +748,8 @@ def _export_weekly_markdown(report: dict, output: Path) -> Path:
         lines.append(f"## {section['title']}")
         lines.append(f"> {section['subtitle']} | 共 {section['count']} 部\n")
 
-        lines.append("| 片名 | 英文名 | 年份 | 日期 | 类型 | 状态 | 季/集 | 平台 | 评分 | 备注 |")
-        lines.append("|------|--------|------|------|------|------|-------|------|------|------|")
+        lines.append("| 片名 | 英文名 | 年份 | 日期 | 类型 | 状态 | 季/集 | 平台 | 评分 | 进度 | 备注 |")
+        lines.append("|------|--------|------|------|------|------|-------|------|------|------|------|")
 
         for item in section["items"]:
             name = item["title_cn"] or "-"
@@ -760,6 +766,7 @@ def _export_weekly_markdown(report: dict, output: Path) -> Path:
             season_ep = season_ep or "-"
             platform = item["platform"]
             rating = str(item["rating"]) if item["rating"] else "-"
+            progress = item.get("progress", "") or "-"
 
             note_parts = []
             if item.get("missing_fields"):
@@ -771,7 +778,7 @@ def _export_weekly_markdown(report: dict, output: Path) -> Path:
             if item.get("missing_fields"):
                 name = f"{name} ⚠️"
 
-            lines.append(f"| {name} | {en} | {year} | {show_date} | {stype} | {status} | {season_ep} | {platform} | {rating} | {note} |")
+            lines.append(f"| {name} | {en} | {year} | {show_date} | {stype} | {status} | {season_ep} | {platform} | {rating} | {progress} | {note} |")
         lines.append("")
 
     output.write_text("\n".join(lines), encoding="utf-8")
@@ -784,6 +791,7 @@ def _export_weekly_csv(report: dict, output: Path) -> Path:
         "title_cn", "title_en", "year", "show_type", "status",
         "primary_date", "next_episode_date",
         "season", "episode", "platform", "genre", "rating",
+        "watched_season", "watched_episode", "translated", "translator", "assignee", "progress",
         "missing_fields",
     ]
 
@@ -811,6 +819,12 @@ def _export_weekly_csv(report: dict, output: Path) -> Path:
                     "platform": item.get("platform", ""),
                     "genre": item.get("genre", ""),
                     "rating": item.get("rating", ""),
+                    "watched_season": item.get("watched_season", ""),
+                    "watched_episode": item.get("watched_episode", ""),
+                    "translated": item.get("translated", ""),
+                    "translator": item.get("translator", ""),
+                    "assignee": item.get("assignee", ""),
+                    "progress": item.get("progress", ""),
                 }
                 mf = item.get("missing_fields", [])
                 if mf:
@@ -892,9 +906,28 @@ def export_calendar(db: ShowDatabase, output: Path) -> Path:
     return output
 
 
-def generate_subscription_reminders(db: ShowDatabase) -> dict:
+def generate_subscription_reminders(
+    db: ShowDatabase,
+    platform: str | None = None,
+    show_type: str | None = None,
+    assignee: str | None = None,
+    only_translated: bool = False,
+) -> dict:
     today = date.today()
     shows = db.shows
+
+    if platform:
+        shows = [s for s in shows if platform.lower() in (s.platform or "").lower()]
+    if show_type:
+        try:
+            st = ShowType(show_type)
+            shows = [s for s in shows if s.show_type == st]
+        except ValueError:
+            pass
+    if assignee:
+        shows = [s for s in shows if assignee.lower() in (s.assignee or "").lower()]
+    if only_translated:
+        shows = [s for s in shows if s.translated]
 
     windows = [
         ("today", "📅 今天", today, today, 0, 0),
@@ -904,7 +937,14 @@ def generate_subscription_reminders(db: ShowDatabase) -> dict:
 
     result = {
         "generated_at": today.isoformat(),
-        "total_count": len(shows),
+        "total_count": len(db.shows),
+        "filtered_count": len(shows),
+        "filters": {
+            "platform": platform or "",
+            "show_type": show_type or "",
+            "assignee": assignee or "",
+            "only_translated": only_translated,
+        },
         "sections": {},
     }
 
@@ -916,7 +956,7 @@ def generate_subscription_reminders(db: ShowDatabase) -> dict:
             if show.next_episode_date and start <= show.next_episode_date <= end:
                 updates.append(_show_brief_for_reminder(show, "update"))
             pd = show.primary_date()
-            if pd and start <= pd <= end and show.status != ShowStatus.ENDED:
+            if pd and start <= pd <= end:
                 new_releases.append(_show_brief_for_reminder(show, "release"))
 
         updates.sort(key=lambda x: x["sort_date"])
@@ -960,6 +1000,21 @@ def _show_brief_for_reminder(show: Show, reminder_type: str) -> dict:
     if show.rating:
         note_parts.append(f"⭐{show.rating}")
 
+    progress_parts = []
+    if show.watched_season is not None or show.watched_episode is not None:
+        watched = ""
+        if show.watched_season is not None:
+            watched += f"S{show.watched_season:02d}"
+        if show.watched_episode is not None:
+            watched += f"E{show.watched_episode:02d}"
+        progress_parts.append(f"看到{watched}" if watched else "追看中")
+    if show.translated:
+        progress_parts.append("已译")
+    if show.translator:
+        progress_parts.append(f"译:{show.translator}")
+    if show.assignee:
+        progress_parts.append(f"负责:{show.assignee}")
+
     return {
         "name": name,
         "title_cn": show.title_cn,
@@ -977,7 +1032,13 @@ def _show_brief_for_reminder(show: Show, reminder_type: str) -> dict:
         "platform": show.platform or "未知平台",
         "genre": show.genre or "",
         "rating": show.rating,
-        "note": " | ".join(note_parts),
+        "note": " / ".join(note_parts),
+        "progress": " / ".join(progress_parts) if progress_parts else "",
+        "watched_season": show.watched_season,
+        "watched_episode": show.watched_episode,
+        "translated": show.translated,
+        "translator": show.translator,
+        "assignee": show.assignee,
         "missing_fields": show.missing_fields(),
     }
 
@@ -986,20 +1047,38 @@ def export_subscription_reminders(
     db: ShowDatabase,
     output: Path,
     fmt: ExportFormat = "markdown",
+    platform: str | None = None,
+    show_type: str | None = None,
+    assignee: str | None = None,
+    only_translated: bool = False,
+    compact: bool = False,
 ) -> Path:
-    data = generate_subscription_reminders(db)
+    data = generate_subscription_reminders(db, platform, show_type, assignee, only_translated)
     if fmt == "json":
-        return _export_subscription_json(data, output)
+        return _export_subscription_json(data, output, compact)
     elif fmt == "csv":
-        return _export_subscription_csv(data, output)
+        return _export_subscription_csv(data, output, compact)
     else:
-        return _export_subscription_markdown(data, output)
+        return _export_subscription_markdown(data, output, compact)
 
 
-def _export_subscription_markdown(data: dict, output: Path) -> Path:
+def _export_subscription_markdown(data: dict, output: Path, compact: bool = False) -> Path:
     lines = []
-    lines.append("# 🔔 影视更新订阅提醒")
-    lines.append(f"> 生成时间：{data['generated_at']} | 共追踪 {data['total_count']} 部\n")
+    if compact:
+        lines.append("## 🔔 更新提醒")
+    else:
+        lines.append("# 🔔 影视更新订阅提醒")
+        filter_parts = []
+        if data["filters"]["platform"]:
+            filter_parts.append(f"平台:{data['filters']['platform']}")
+        if data["filters"]["show_type"]:
+            filter_parts.append(f"类型:{data['filters']['show_type']}")
+        if data["filters"]["assignee"]:
+            filter_parts.append(f"负责人:{data['filters']['assignee']}")
+        if data["filters"]["only_translated"]:
+            filter_parts.append("仅已翻译")
+        filter_info = f" | 筛选: {', '.join(filter_parts)}" if filter_parts else ""
+        lines.append(f"> 生成时间：{data['generated_at']} | 共追踪 {data['total_count']} 部{filter_info}\n")
 
     section_order = ["today", "week", "month"]
     for key in section_order:
@@ -1007,30 +1086,47 @@ def _export_subscription_markdown(data: dict, output: Path) -> Path:
         if section["total"] == 0:
             continue
 
-        lines.append(f"## {section['label']}")
-        lines.append(f"> {section['date_range']} | 更新 {section['updates_count']} 部 / 新上线 {section['new_releases_count']} 部 / 共 {section['total']} 条\n")
+        if compact:
+            lines.append(f"### {section['label']} ({section['total']}条)")
+        else:
+            lines.append(f"## {section['label']}")
+            lines.append(f"> {section['date_range']} | 更新 {section['updates_count']} 部 / 新上线 {section['new_releases_count']} 部 / 共 {section['total']} 条\n")
 
         if section["updates"]:
-            lines.append(f"### 📺 剧集更新\n")
-            lines.append("| 日期 | 片名 | 季集 | 平台 | 类型 | 备注 |")
-            lines.append("|------|------|------|------|------|------|")
-            for item in section["updates"]:
-                lines.append(
-                    f"| {item['date']} | {item['name']} | {item['season_ep'] or '-'} | {item['platform']} | "
-                    f"{item['show_type']} | {item['note'] or '-'} |"
-                )
+            if not compact:
+                lines.append(f"### 📺 剧集更新\n")
+            if compact:
+                for item in section["updates"]:
+                    season_ep = f" {item['season_ep']}" if item['season_ep'] else ""
+                    platform = f" [{item['platform']}]" if item['platform'] and item['platform'] != '未知平台' else ""
+                    lines.append(f"- {item['date']} {item['name']}{season_ep}{platform}")
+            else:
+                lines.append("| 日期 | 片名 | 季集 | 平台 | 类型 | 进度 | 备注 |")
+                lines.append("|------|------|------|------|------|------|------|")
+                for item in section["updates"]:
+                    lines.append(
+                        f"| {item['date']} | {item['name']} | {item['season_ep'] or '-'} | {item['platform']} | "
+                        f"{item['show_type']} | {item['progress'] or '-'} | {item['note'] or '-'} |"
+                    )
             lines.append("")
 
         if section["new_releases"]:
-            lines.append(f"### 🎬 新上线\n")
-            lines.append("| 日期 | 片名 | 年份 | 平台 | 类型 | 备注 |")
-            lines.append("|------|------|------|------|------|------|")
-            for item in section["new_releases"]:
-                year = str(item["year"]) if item["year"] else "-"
-                lines.append(
-                    f"| {item['date']} | {item['name']} | {year} | {item['platform']} | "
-                    f"{item['show_type']} | {item['note'] or '-'} |"
-                )
+            if not compact:
+                lines.append(f"### 🎬 新上线\n")
+            if compact:
+                for item in section["new_releases"]:
+                    year = f" ({item['year']})" if item['year'] else ""
+                    platform = f" [{item['platform']}]" if item['platform'] and item['platform'] != '未知平台' else ""
+                    lines.append(f"- {item['date']} {item['name']}{year}{platform}")
+            else:
+                lines.append("| 日期 | 片名 | 年份 | 平台 | 类型 | 进度 | 备注 |")
+                lines.append("|------|------|------|------|------|------|------|")
+                for item in section["new_releases"]:
+                    year = str(item["year"]) if item["year"] else "-"
+                    lines.append(
+                        f"| {item['date']} | {item['name']} | {year} | {item['platform']} | "
+                        f"{item['show_type']} | {item['progress'] or '-'} | {item['note'] or '-'} |"
+                    )
             lines.append("")
 
     has_content = any(data["sections"][k]["total"] > 0 for k in section_order)
@@ -1042,12 +1138,21 @@ def _export_subscription_markdown(data: dict, output: Path) -> Path:
     return output
 
 
-def _export_subscription_csv(data: dict, output: Path) -> Path:
-    headers = [
-        "window", "window_label", "date_range", "reminder_type", "event_label",
-        "date", "title_cn", "title_en", "year", "show_type", "status",
-        "season", "episode", "season_ep", "platform", "genre", "rating", "note", "missing_fields",
-    ]
+def _export_subscription_csv(data: dict, output: Path, compact: bool = False) -> Path:
+    if compact:
+        headers = [
+            "window", "window_label", "date_range", "reminder_type",
+            "date", "name", "season_ep", "platform",
+        ]
+    else:
+        headers = [
+            "window", "window_label", "date_range", "reminder_type", "event_label",
+            "date", "title_cn", "title_en", "year", "show_type", "status",
+            "season", "episode", "season_ep", "platform", "genre", "rating",
+            "progress", "watched_season", "watched_episode",
+            "translated", "translator", "assignee",
+            "note", "missing_fields",
+        ]
 
     section_order = ["today", "week", "month"]
 
@@ -1057,53 +1162,82 @@ def _export_subscription_csv(data: dict, output: Path) -> Path:
         for key in section_order:
             section = data["sections"][key]
             for item in section["updates"] + section["new_releases"]:
-                row = {
-                    "window": key,
-                    "window_label": section["label"],
-                    "date_range": section["date_range"],
-                    "reminder_type": item["reminder_type"],
-                    "event_label": item["event_label"],
-                    "date": item["date"],
-                    "title_cn": item.get("title_cn", ""),
-                    "title_en": item.get("title_en", ""),
-                    "year": item.get("year", ""),
-                    "show_type": item.get("show_type", ""),
-                    "status": item.get("status", ""),
-                    "season": item.get("season", ""),
-                    "episode": item.get("episode", ""),
-                    "season_ep": item.get("season_ep", ""),
-                    "platform": item.get("platform", ""),
-                    "genre": item.get("genre", ""),
-                    "rating": item.get("rating", ""),
-                    "note": item.get("note", ""),
-                }
-                mf = item.get("missing_fields", [])
-                if mf:
-                    row["missing_fields"] = "; ".join(mf)
+                if compact:
+                    row = {
+                        "window": key,
+                        "window_label": section["label"],
+                        "date_range": section["date_range"],
+                        "reminder_type": item["reminder_type"],
+                        "date": item["date"],
+                        "name": item["name"],
+                        "season_ep": item.get("season_ep", ""),
+                        "platform": item.get("platform", ""),
+                    }
+                else:
+                    row = {
+                        "window": key,
+                        "window_label": section["label"],
+                        "date_range": section["date_range"],
+                        "reminder_type": item["reminder_type"],
+                        "event_label": item["event_label"],
+                        "date": item["date"],
+                        "title_cn": item.get("title_cn", ""),
+                        "title_en": item.get("title_en", ""),
+                        "year": item.get("year", ""),
+                        "show_type": item.get("show_type", ""),
+                        "status": item.get("status", ""),
+                        "season": item.get("season", ""),
+                        "episode": item.get("episode", ""),
+                        "season_ep": item.get("season_ep", ""),
+                        "platform": item.get("platform", ""),
+                        "genre": item.get("genre", ""),
+                        "rating": item.get("rating", ""),
+                        "progress": item.get("progress", ""),
+                        "watched_season": item.get("watched_season", ""),
+                        "watched_episode": item.get("watched_episode", ""),
+                        "translated": item.get("translated", ""),
+                        "translator": item.get("translator", ""),
+                        "assignee": item.get("assignee", ""),
+                        "note": item.get("note", ""),
+                    }
+                    mf = item.get("missing_fields", [])
+                    if mf:
+                        row["missing_fields"] = "; ".join(mf)
                 writer.writerow(row)
     return output
 
 
-def _export_subscription_json(data: dict, output: Path) -> Path:
+def _export_subscription_json(data: dict, output: Path, compact: bool = False) -> Path:
     for section in data["sections"].values():
         for item in section["updates"] + section["new_releases"]:
             if "sort_date" in item:
                 del item["sort_date"]
+            if compact:
+                for key in list(item.keys()):
+                    if key not in ("name", "date", "season_ep", "platform", "reminder_type", "note"):
+                        del item[key]
     output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return output
 
 
-def apply_supplement(db: ShowDatabase, supplement_path: Path) -> dict:
+def apply_supplement(
+    db: ShowDatabase,
+    supplement_path: Path,
+    mode: str = "fill",  # fill: 只补缺失, overwrite: 全部覆盖, check: 仅检查冲突
+    conflict_handler=None,  # 回调函数 (show, field, old_val, new_val) -> bool (True=覆盖, False=保留)
+) -> dict:
     import pandas as pd
 
     stats = {
         "matched": 0,
+        "not_found": 0,
         "fields_updated": 0,
+        "fields_skipped": 0,
+        "conflicts": [],
         "platform_updated": 0,
         "director_updated": 0,
         "cast_updated": 0,
         "genre_updated": 0,
-        "not_found": 0,
     }
 
     if supplement_path.suffix in (".xlsx", ".xls"):
@@ -1112,6 +1246,31 @@ def apply_supplement(db: ShowDatabase, supplement_path: Path) -> dict:
         df = pd.read_csv(supplement_path)
 
     df.columns = [c.strip().lower() for c in df.columns]
+
+    update_fields = [
+        ("platform", "platform"),
+        ("director", "director"),
+        ("cast", "cast"),
+        ("genre", "genre"),
+        ("release_date", "release_date"),
+        ("first_air_date", "first_air_date"),
+        ("air_date", "first_air_date"),
+        ("next_episode_date", "next_episode_date"),
+        ("last_air_date", "last_air_date"),
+        ("season", "season"),
+        ("episode", "episode"),
+        ("duration", "duration"),
+        ("poster_url", "poster_url"),
+        ("rating", "rating"),
+        ("notes", "notes"),
+        ("translator", "translator"),
+        ("assignee", "assignee"),
+        ("translated", "translated"),
+        ("watched_season", "watched_season"),
+        ("watched_episode", "watched_episode"),
+    ]
+
+    from .models import _parse_date
 
     for _, row in df.iterrows():
         title = str(
@@ -1141,57 +1300,87 @@ def apply_supplement(db: ShowDatabase, supplement_path: Path) -> dict:
             continue
 
         stats["matched"] += 1
-
-        update_fields = [
-            ("platform", "platform"),
-            ("director", "director"),
-            ("cast", "cast"),
-            ("genre", "genre"),
-            ("release_date", "release_date"),
-            ("first_air_date", "first_air_date"),
-            ("air_date", "first_air_date"),
-            ("next_episode_date", "next_episode_date"),
-            ("last_air_date", "last_air_date"),
-            ("season", "season"),
-            ("episode", "episode"),
-            ("duration", "duration"),
-            ("poster_url", "poster_url"),
-            ("rating", "rating"),
-            ("notes", "notes"),
-        ]
-
-        from .models import _parse_date
+        show_conflicts = []
 
         for src, dst in update_fields:
             val = row.get(src)
             if val is None or (isinstance(val, str) and not val.strip()):
                 continue
 
-            current_val = getattr(matched, dst)
-            if current_val and current_val != "" and current_val != ShowType.UNKNOWN and current_val != ShowStatus.UNKNOWN:
-                continue
-
+            parsed_new_val = val
             if dst in ("release_date", "first_air_date", "last_air_date", "next_episode_date"):
-                parsed = _parse_date(str(val).strip())
-                if parsed:
-                    setattr(matched, dst, parsed)
-                    stats["fields_updated"] += 1
-            elif dst == "season" or dst == "episode":
+                parsed_new_val = _parse_date(str(val).strip())
+                if not parsed_new_val:
+                    continue
+            elif dst in ("season", "episode", "watched_season", "watched_episode"):
                 try:
-                    setattr(matched, dst, int(val))
-                    stats["fields_updated"] += 1
+                    parsed_new_val = int(val)
                 except (ValueError, TypeError):
-                    pass
+                    continue
             elif dst == "rating":
                 try:
-                    setattr(matched, dst, float(val))
-                    stats["fields_updated"] += 1
+                    parsed_new_val = float(val)
                 except (ValueError, TypeError):
-                    pass
+                    continue
+            elif dst == "translated":
+                val_str = str(val).strip().lower()
+                parsed_new_val = val_str in ("true", "1", "yes", "是", "已翻译")
             else:
-                val_str = str(val).strip()
-                if val_str:
-                    setattr(matched, dst, val_str)
+                parsed_new_val = str(val).strip()
+
+            current_val = getattr(matched, dst)
+            has_current = current_val not in (None, "", ShowType.UNKNOWN, ShowStatus.UNKNOWN, False)
+
+            if not has_current:
+                setattr(matched, dst, parsed_new_val)
+                stats["fields_updated"] += 1
+                if dst == "platform":
+                    stats["platform_updated"] += 1
+                elif dst == "director":
+                    stats["director_updated"] += 1
+                elif dst == "cast":
+                    stats["cast_updated"] += 1
+                elif dst == "genre":
+                    stats["genre_updated"] += 1
+                continue
+
+            is_same = str(current_val) == str(parsed_new_val)
+            if is_same:
+                continue
+
+            conflict = {
+                "show_title": matched.title_cn or matched.title_en,
+                "field": dst,
+                "old_value": str(current_val),
+                "new_value": str(parsed_new_val),
+            }
+            show_conflicts.append(conflict)
+            stats["conflicts"].append(conflict)
+
+            if mode == "fill":
+                stats["fields_skipped"] += 1
+                continue
+
+            if mode == "overwrite":
+                setattr(matched, dst, parsed_new_val)
+                stats["fields_updated"] += 1
+                if dst == "platform":
+                    stats["platform_updated"] += 1
+                elif dst == "director":
+                    stats["director_updated"] += 1
+                elif dst == "cast":
+                    stats["cast_updated"] += 1
+                elif dst == "genre":
+                    stats["genre_updated"] += 1
+                continue
+
+            if mode == "check":
+                continue
+
+            if mode == "prompt" and conflict_handler:
+                do_overwrite = conflict_handler(matched, dst, current_val, parsed_new_val)
+                if do_overwrite:
+                    setattr(matched, dst, parsed_new_val)
                     stats["fields_updated"] += 1
                     if dst == "platform":
                         stats["platform_updated"] += 1
@@ -1201,6 +1390,9 @@ def apply_supplement(db: ShowDatabase, supplement_path: Path) -> dict:
                         stats["cast_updated"] += 1
                     elif dst == "genre":
                         stats["genre_updated"] += 1
+                else:
+                    stats["fields_skipped"] += 1
 
-    db.save()
+    if mode != "check":
+        db.save()
     return stats

@@ -78,8 +78,9 @@ class TMDBClient:
         has_episode_marker = show.episode is not None
         raw_has_season = bool(re.search(r"[Ss]\d+|第\s*\d+\s*季|Season\s*\d+", show.raw_title, re.IGNORECASE))
         raw_has_episode = bool(re.search(r"[Ee]\d+|第\s*\d+\s*集|EP?\s*\d+", show.raw_title, re.IGNORECASE))
+        has_next_ep_date = show.next_episode_date is not None
 
-        force_tv = has_season_marker or has_episode_marker or raw_has_season or raw_has_episode
+        force_tv = has_season_marker or has_episode_marker or raw_has_season or raw_has_episode or has_next_ep_date
 
         is_tv = force_tv or show.show_type in (ShowType.TV, ShowType.ANIME, ShowType.VARIETY)
         year = show.year
@@ -171,7 +172,8 @@ class TMDBClient:
         has_episode_marker = show.episode is not None
         raw_has_season = bool(re.search(r"[Ss]\d+|第\s*\d+\s*季|Season\s*\d+", show.raw_title, re.IGNORECASE))
         raw_has_episode = bool(re.search(r"[Ee]\d+|第\s*\d+\s*集|EP?\s*\d+", show.raw_title, re.IGNORECASE))
-        force_tv = has_season_marker or has_episode_marker or raw_has_season or raw_has_episode
+        has_next_ep_date = show.next_episode_date is not None
+        force_tv = has_season_marker or has_episode_marker or raw_has_season or raw_has_episode or has_next_ep_date
 
         is_tv = force_tv or show.show_type in (ShowType.TV, ShowType.ANIME, ShowType.VARIETY)
 

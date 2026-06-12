@@ -74,6 +74,11 @@ class Show:
     rating: Optional[float] = None
     notes: str = ""
     raw_title: str = ""
+    watched_season: Optional[int] = None
+    watched_episode: Optional[int] = None
+    translated: bool = False
+    translator: str = ""
+    assignee: str = ""
 
     _MISSING_FIELDS_KEY = "missing_fields"
     _DATE_FIELDS = {
@@ -82,10 +87,18 @@ class Show:
         "last_air_date",
         "next_episode_date",
     }
+    _PROGRESS_FIELDS = {
+        "watched_season",
+        "watched_episode",
+        "translated",
+        "translator",
+        "assignee",
+    }
 
     def missing_fields(self) -> list[str]:
         result = []
         skip = {"raw_title", "notes", "tmdb_id", "imdb_id", "rating"}
+        skip.update(self._PROGRESS_FIELDS)
         for f in fields(self):
             if f.name in skip:
                 continue
@@ -121,6 +134,23 @@ class Show:
         if self.next_episode_date:
             dates.append(("下一集更新", self.next_episode_date))
         return dates
+
+    def progress_summary(self) -> str:
+        parts = []
+        if self.watched_season is not None or self.watched_episode is not None:
+            ep = ""
+            if self.watched_season is not None:
+                ep += f"S{self.watched_season:02d}"
+            if self.watched_episode is not None:
+                ep += f"E{self.watched_episode:02d}"
+            parts.append(f"看到{ep}" if ep else "追看中")
+        if self.translated:
+            parts.append("已翻译")
+        if self.translator:
+            parts.append(f"翻译:{self.translator}")
+        if self.assignee:
+            parts.append(f"负责:{self.assignee}")
+        return " / ".join(parts) if parts else "无进度"
 
     def to_dict(self) -> dict:
         d = asdict(self)
